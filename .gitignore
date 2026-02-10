@@ -1,0 +1,7 @@
+# Binaries
+protoc-gen-go
+protoc-gen-sdm
+
+# Vendor
+vendor_proto/
+_debug_proto_include/

@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package sdm;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/jinuthankachan/sdm/sdmprotos";
+
+extend google.protobuf.FieldOptions {
+  bool primary_key = 50000;
+  bool chain_identifier_key = 50001;
+  bool pii = 50002;
+  bool query_index = 50003;
+  bool hashed = 50004;
+}

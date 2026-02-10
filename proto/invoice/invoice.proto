@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package invoice;
+
+import "proto/sdmprotos/annotations.proto";
+
+option go_package = "demo/models/invoice";
+
+message Invoice {
+  string id = 1 [(sdm.primary_key) = true, (sdm.chain_identifier_key) = true];
+  int64 invoice_number = 2 [(sdm.pii) = true, (sdm.query_index) = true];
+  string seller_gst = 3 [(sdm.pii) = true, (sdm.hashed) = true];
+  string buyer_gst = 4 [(sdm.pii) = true, (sdm.hashed) = true];
+  string seller_name = 5 [(sdm.pii) = true];
+  string buyer_name = 6 [(sdm.pii) = true];
+  string seller = 7;
+  string buyer = 8;
+  int64 amount = 9;
+}

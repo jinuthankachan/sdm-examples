@@ -8,11 +8,11 @@ import (
 
 type InvoicePii struct {
 	Id            string `gorm:"column:id;primaryKey"`
-	InvoiceNumber int64  `gorm:"column:invoice_number;primaryKey"`
-	SellerGst     string `gorm:"column:seller_gst;primaryKey"`
-	BuyerGst      string `gorm:"column:buyer_gst;primaryKey"`
-	SellerName    string `gorm:"column:seller_name;primaryKey"`
-	BuyerName     string `gorm:"column:buyer_name;primaryKey"`
+	InvoiceNumber int64  `gorm:"column:invoice_number"`
+	SellerGst     string `gorm:"column:seller_gst"`
+	BuyerGst      string `gorm:"column:buyer_gst"`
+	SellerName    string `gorm:"column:seller_name"`
+	BuyerName     string `gorm:"column:buyer_name"`
 }
 
 type InvoiceChain struct {

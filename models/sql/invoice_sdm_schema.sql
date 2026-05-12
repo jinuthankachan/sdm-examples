@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS pii_invoices (
   invoice_id TEXT,
   seller_gst TEXT,
   buyer_gst TEXT,
-  metadata JSONB,
+  price JSONB,
   PRIMARY KEY (invoice_id),
   FOREIGN KEY (seller_id) REFERENCES pii_users(id),
   FOREIGN KEY (buyer_id) REFERENCES pii_users(id)
@@ -48,14 +48,14 @@ CREATE OR REPLACE VIEW invoices AS
     c_seller_id.field_value AS seller_id,
     c_buyer_id.field_value AS buyer_id,
     c_amount.field_value AS amount,
-    p.metadata,
-    c_price.field_value::jsonb AS price
+    c_metadata.field_value::jsonb AS metadata,
+    p.price
   FROM pii_invoices p
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_seller_gst' ORDER BY key, field_name, version DESC) c_hashed_seller_gst ON p.invoice_id = c_hashed_seller_gst.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_buyer_gst' ORDER BY key, field_name, version DESC) c_hashed_buyer_gst ON p.invoice_id = c_hashed_buyer_gst.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='seller_id' ORDER BY key, field_name, version DESC) c_seller_id ON p.invoice_id = c_seller_id.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='buyer_id' ORDER BY key, field_name, version DESC) c_buyer_id ON p.invoice_id = c_buyer_id.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='amount' ORDER BY key, field_name, version DESC) c_amount ON p.invoice_id = c_amount.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='price' ORDER BY key, field_name, version DESC) c_price ON p.invoice_id = c_price.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='metadata' ORDER BY key, field_name, version DESC) c_metadata ON p.invoice_id = c_metadata.key
 ;
 

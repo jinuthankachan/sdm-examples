@@ -178,7 +178,7 @@ var File_invoice_invoice_proto protoreflect.FileDescriptor
 
 const file_invoice_invoice_proto_rawDesc = "" +
 	"\n" +
-	"\x15invoice/invoice.proto\x12\ainvoice\x1a!proto/sdmprotos/annotations.proto\"\xb8\x02\n" +
+	"\x15invoice/invoice.proto\x12\ainvoice\x1a!proto/sdmprotos/annotations.proto\"\xbe\x02\n" +
 	"\aInvoice\x12'\n" +
 	"\n" +
 	"invoice_id\x18\x01 \x01(\tB\b\x80\xb5\x18\x01\x88\xb5\x18\x01R\tinvoiceId\x12'\n" +
@@ -187,9 +187,9 @@ const file_invoice_invoice_proto_rawDesc = "" +
 	"\tbuyer_gst\x18\x03 \x01(\tB\b\x90\xb5\x18\x01\xa0\xb5\x18\x01R\bbuyerGst\x12(\n" +
 	"\tseller_id\x18\x04 \x01(\tB\v\xb2\xb5\x18\auser.idR\bsellerId\x12&\n" +
 	"\bbuyer_id\x18\x05 \x01(\tB\v\xb2\xb5\x18\auser.idR\abuyerId\x12\x16\n" +
-	"\x06amount\x18\x06 \x01(\x03R\x06amount\x12$\n" +
-	"\bmetadata\x18\a \x01(\tB\b\x90\xb5\x18\x01\xc0\xb5\x18\x01R\bmetadata\x12$\n" +
-	"\x05price\x18\b \x01(\v2\x0e.invoice.MoneyR\x05price\"1\n" +
+	"\x06amount\x18\x06 \x01(\x03R\x06amount\x12 \n" +
+	"\bmetadata\x18\a \x01(\tB\x04\xc0\xb5\x18\x01R\bmetadata\x12.\n" +
+	"\x05price\x18\b \x01(\v2\x0e.invoice.MoneyB\b\x90\xb5\x18\x01\xc0\xb5\x18\x01R\x05price\"1\n" +
 	"\x05Money\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\x03R\x05value\x12\x12\n" +
 	"\x04unit\x18\x02 \x01(\tR\x04unitB\x15Z\x13demo/models/invoiceb\x06proto3"

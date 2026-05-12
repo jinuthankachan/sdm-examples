@@ -13,9 +13,10 @@ message Invoice {
   string seller_id = 4 [(sdm.references) = "user.id"];
   string buyer_id = 5 [(sdm.references) = "user.id"];
   int64 amount = 6;
-  string metadata = 7 [(sdm.pii) = true, (sdm.json) = true];
-  Money price = 8;
+  string metadata = 7 [(sdm.json) = true];
+  Money price = 8 [(sdm.pii) = true, (sdm.json) = true];
 }
+
 
 message Money {
   int64 value = 1;

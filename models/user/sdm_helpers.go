@@ -2,7 +2,15 @@
 
 package user
 
-import "strings"
+import (
+	"strings"
+	"context"
+	"fmt"
+	"reflect"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"gorm.io/gorm/schema"
+)
 
 // pgArrayLiteral serialises a string slice as a PostgreSQL array literal.
 // e.g. []string{"A", "B"} → "{A,B}"
@@ -10,4 +18,57 @@ import "strings"
 // this helper produces "{A,B}" which survives a ::text[] cast.
 func pgArrayLiteral(vals []string) string {
 	return "{" + strings.Join(vals, ",") + "}"
+}
+
+type protojsonSerializer struct{}
+
+func init() {
+	schema.RegisterSerializer("protojson", protojsonSerializer{})
+}
+
+func (protojsonSerializer) Scan(ctx context.Context, field *schema.Field, dst reflect.Value, dbValue interface{}) error {
+	if dbValue == nil {
+		return nil
+	}
+	var data []byte
+	switch v := dbValue.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		return fmt.Errorf("protojson: unsupported source type %T for field %s", dbValue, field.Name)
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	ft := field.FieldType
+	if ft.Kind() != reflect.Ptr {
+		return fmt.Errorf("protojson: field %s must be a pointer to a proto.Message", field.Name)
+	}
+	ptr := reflect.New(ft.Elem())
+	msg, ok := ptr.Interface().(proto.Message)
+	if !ok {
+		return fmt.Errorf("protojson: field %s does not implement proto.Message", field.Name)
+	}
+	if err := protojson.Unmarshal(data, msg); err != nil {
+		return err
+	}
+	field.ReflectValueOf(ctx, dst).Set(ptr)
+	return nil
+}
+
+func (protojsonSerializer) Value(ctx context.Context, field *schema.Field, dst reflect.Value, fieldValue interface{}) (interface{}, error) {
+	if fieldValue == nil {
+		return nil, nil
+	}
+	v := reflect.ValueOf(fieldValue)
+	if v.Kind() == reflect.Ptr && v.IsNil() {
+		return nil, nil
+	}
+	msg, ok := fieldValue.(proto.Message)
+	if !ok {
+		return nil, fmt.Errorf("protojson: field %s does not implement proto.Message (got %T)", field.Name, fieldValue)
+	}
+	return protojson.Marshal(msg)
 }

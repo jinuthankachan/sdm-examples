@@ -7,8 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"google.golang.org/protobuf/encoding/protojson"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -27,7 +25,7 @@ func (r *InvoiceRepo) SavePii(ctx context.Context, model *Invoice) error {
 			InvoiceId: model.InvoiceId,
 			SellerGst: model.SellerGst,
 			BuyerGst:  model.BuyerGst,
-			Metadata:  datatypes.JSON(model.Metadata),
+			Price:     model.Price,
 		}
 		if err := tx.Create(&pii).Error; err != nil {
 			return err
@@ -40,14 +38,6 @@ func (r *InvoiceRepo) SaveChain(ctx context.Context, model *Invoice) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Save Chain Fields
 		compositeKey := fmt.Sprintf("%v", model.InvoiceId)
-		var priceJSON datatypes.JSON
-		if model.Price != nil {
-			_b, err := protojson.Marshal(model.Price)
-			if err != nil {
-				return err
-			}
-			priceJSON = _b
-		}
 		// Hash SellerGst
 		h_SellerGst := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
 		hashed_SellerGst := hex.EncodeToString(h_SellerGst[:])
@@ -91,8 +81,8 @@ func (r *InvoiceRepo) SaveChain(ctx context.Context, model *Invoice) error {
 		}
 		if err := tx.Create(&InvoiceChain{
 			Key:        compositeKey,
-			FieldName:  "price",
-			FieldValue: string(priceJSON),
+			FieldName:  "metadata",
+			FieldValue: string(model.Metadata),
 		}).Error; err != nil {
 			return err
 		}
@@ -106,7 +96,7 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 			InvoiceId: model.InvoiceId,
 			SellerGst: model.SellerGst,
 			BuyerGst:  model.BuyerGst,
-			Metadata:  datatypes.JSON(model.Metadata),
+			Price:     model.Price,
 		}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&pii).Error; err != nil {
 			return err
@@ -114,14 +104,6 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 
 		// Save Chain Fields
 		compositeKey := fmt.Sprintf("%v", model.InvoiceId)
-		var priceJSON datatypes.JSON
-		if model.Price != nil {
-			_b, err := protojson.Marshal(model.Price)
-			if err != nil {
-				return err
-			}
-			priceJSON = _b
-		}
 		// Hash SellerGst
 		h_SellerGst := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
 		hashed_SellerGst := hex.EncodeToString(h_SellerGst[:])
@@ -165,8 +147,8 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 		}
 		if err := tx.Create(&InvoiceChain{
 			Key:        compositeKey,
-			FieldName:  "price",
-			FieldValue: string(priceJSON),
+			FieldName:  "metadata",
+			FieldValue: string(model.Metadata),
 		}).Error; err != nil {
 			return err
 		}

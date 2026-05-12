@@ -9,10 +9,10 @@ import (
 )
 
 type InvoicePii struct {
-	InvoiceId string         `gorm:"column:invoice_id;primaryKey"`
-	SellerGst string         `gorm:"column:seller_gst"`
-	BuyerGst  string         `gorm:"column:buyer_gst"`
-	Metadata  datatypes.JSON `gorm:"column:metadata;type:jsonb"`
+	InvoiceId string `gorm:"column:invoice_id;primaryKey"`
+	SellerGst string `gorm:"column:seller_gst"`
+	BuyerGst  string `gorm:"column:buyer_gst"`
+	Price     *Money `gorm:"column:price;type:jsonb;serializer:protojson"`
 }
 
 type InvoiceChain struct {
@@ -34,7 +34,7 @@ type InvoiceView struct {
 	BuyerId         string         `gorm:"column:buyer_id"`
 	Amount          int64          `gorm:"column:amount"`
 	Metadata        datatypes.JSON `gorm:"column:metadata"`
-	Price           datatypes.JSON `gorm:"column:price"`
+	Price           *Money         `gorm:"column:price;serializer:protojson"`
 	TxHash          string         `gorm:"column:tx_hash"`
 }
 

@@ -4,15 +4,15 @@ package invoice
 
 import (
 	"time"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 type InvoicePii struct {
-	Id            string `gorm:"column:id;primaryKey"`
-	InvoiceNumber int64  `gorm:"column:invoice_number"`
-	SellerGst     string `gorm:"column:seller_gst"`
-	BuyerGst      string `gorm:"column:buyer_gst"`
-	SellerName    string `gorm:"column:seller_name"`
-	BuyerName     string `gorm:"column:buyer_name"`
+	InvoiceId string         `gorm:"column:invoice_id;primaryKey"`
+	SellerGst string         `gorm:"column:seller_gst"`
+	BuyerGst  string         `gorm:"column:buyer_gst"`
+	Metadata  datatypes.JSON `gorm:"column:metadata;type:jsonb"`
 }
 
 type InvoiceChain struct {
@@ -25,20 +25,28 @@ type InvoiceChain struct {
 }
 
 type InvoiceView struct {
-	Id              string `gorm:"column:id"`
-	InvoiceNumber   int64  `gorm:"column:invoice_number"`
-	SellerGst       string `gorm:"column:seller_gst"`
-	HashedSellerGst string `gorm:"column:hashed_seller_gst"`
-	BuyerGst        string `gorm:"column:buyer_gst"`
-	HashedBuyerGst  string `gorm:"column:hashed_buyer_gst"`
-	SellerName      string `gorm:"column:seller_name"`
-	BuyerName       string `gorm:"column:buyer_name"`
-	Seller          string `gorm:"column:seller"`
-	Buyer           string `gorm:"column:buyer"`
-	Amount          int64  `gorm:"column:amount"`
-	TxHash          string `gorm:"column:tx_hash"`
+	InvoiceId       string         `gorm:"column:invoice_id"`
+	SellerGst       string         `gorm:"column:seller_gst"`
+	HashedSellerGst string         `gorm:"column:hashed_seller_gst"`
+	BuyerGst        string         `gorm:"column:buyer_gst"`
+	HashedBuyerGst  string         `gorm:"column:hashed_buyer_gst"`
+	SellerId        string         `gorm:"column:seller_id"`
+	BuyerId         string         `gorm:"column:buyer_id"`
+	Amount          int64          `gorm:"column:amount"`
+	Metadata        datatypes.JSON `gorm:"column:metadata"`
+	Price           datatypes.JSON `gorm:"column:price"`
+	TxHash          string         `gorm:"column:tx_hash"`
 }
 
 func (InvoicePii) TableName() string   { return "pii_invoices" }
 func (InvoiceChain) TableName() string { return "chain_invoices" }
 func (InvoiceView) TableName() string  { return "invoices" }
+
+func (c *InvoiceChain) EnsureUnique(tx *gorm.DB) bool {
+	var count int64
+	err := tx.Model(&InvoiceChain{}).Where("field_name = ? AND field_value = ?", c.FieldName, c.FieldValue).Count(&count).Error
+	if err != nil {
+		return false
+	}
+	return count == 0
+}

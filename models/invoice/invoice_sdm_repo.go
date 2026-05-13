@@ -134,7 +134,7 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 
 func (r *InvoiceRepo) Fetch(ctx context.Context, invoiceId string) (*InvoiceView, error) {
 	var view InvoiceView
-	if err := r.db.WithContext(ctx).Where("invoice_id = ?", invoiceId).First(&view).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("invoice_id = ?", invoiceId).Where("is_deleted = ?", false).First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -142,7 +142,7 @@ func (r *InvoiceRepo) Fetch(ctx context.Context, invoiceId string) (*InvoiceView
 
 func (r *InvoiceRepo) Exists(ctx context.Context, invoiceId string) (bool, error) {
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&InvoicePii{}).Where("invoice_id = ?", invoiceId).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&InvoicePii{}).Where("invoice_id = ?", invoiceId).Where("is_deleted = ?", false).Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil

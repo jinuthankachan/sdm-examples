@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -257,4 +258,80 @@ func TestUser_ExistsByPan_KnownIssue(t *testing.T) {
 	_, err := repo.ExistsByPan(ctx, u.Pan)
 	require.Error(t, err, "ExistsByPan should fail until pan is in PII table")
 	require.Contains(t, strings.ToLower(err.Error()), "pan")
+}
+
+func TestUser_AuditFields_Populated(t *testing.T) {
+	resetTables(t)
+	repo := user.NewUserRepo(testDB)
+	ctx := context.Background()
+
+	before := time.Now().UTC().Add(-time.Second)
+	u := newUser("audit_fields")
+	require.NoError(t, repo.Save(ctx, u))
+
+	view, err := repo.Fetch(ctx, u.Id)
+	require.NoError(t, err)
+	require.False(t, view.IsDeleted)
+	require.True(t, view.CreatedAt.After(before),
+		"CreatedAt %v should be after %v", view.CreatedAt, before)
+	// On INSERT, GORM sets both timestamps to the same now(); ON CONFLICT DO
+	// NOTHING means no UPDATE ever fires from generated code, so UpdatedAt
+	// equals CreatedAt for the lifetime of a row today.
+	require.WithinDuration(t, view.CreatedAt, view.UpdatedAt, time.Second)
+}
+
+func TestUser_SoftDelete_HidesFromFetch(t *testing.T) {
+	resetTables(t)
+	repo := user.NewUserRepo(testDB)
+	ctx := context.Background()
+
+	u := newUser("soft_delete_fetch")
+	require.NoError(t, repo.Save(ctx, u))
+
+	require.NoError(t, testDB.Exec(
+		`UPDATE pii_users SET is_deleted = TRUE WHERE id = ?`, u.Id,
+	).Error)
+
+	_, err := repo.Fetch(ctx, u.Id)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, gorm.ErrRecordNotFound),
+		"soft-deleted row must be invisible to Fetch, got %v", err)
+}
+
+func TestUser_SoftDelete_HidesFromFetchByEmail(t *testing.T) {
+	resetTables(t)
+	repo := user.NewUserRepo(testDB)
+	ctx := context.Background()
+
+	u := newUser("soft_delete_email")
+	require.NoError(t, repo.Save(ctx, u))
+
+	require.NoError(t, testDB.Exec(
+		`UPDATE pii_users SET is_deleted = TRUE WHERE id = ?`, u.Id,
+	).Error)
+
+	_, err := repo.FetchByEmail(ctx, u.Email)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, gorm.ErrRecordNotFound))
+}
+
+func TestUser_SoftDelete_ExistsReturnsFalse(t *testing.T) {
+	resetTables(t)
+	repo := user.NewUserRepo(testDB)
+	ctx := context.Background()
+
+	u := newUser("soft_delete_exists")
+	require.NoError(t, repo.Save(ctx, u))
+
+	require.NoError(t, testDB.Exec(
+		`UPDATE pii_users SET is_deleted = TRUE WHERE id = ?`, u.Id,
+	).Error)
+
+	got, err := repo.Exists(ctx, u.Id)
+	require.NoError(t, err)
+	require.False(t, got, "Exists must return false for soft-deleted row")
+
+	got, err = repo.ExistsByEmail(ctx, u.Email)
+	require.NoError(t, err)
+	require.False(t, got, "ExistsByEmail must return false for soft-deleted row")
 }

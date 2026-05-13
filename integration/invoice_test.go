@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/datatypes"
@@ -228,6 +229,47 @@ func TestInvoice_Fetch_Missing(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, gorm.ErrRecordNotFound),
 		"expected ErrRecordNotFound, got %v", err)
+}
+
+func TestInvoice_AuditFields_Populated(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	before := time.Now().UTC().Add(-time.Second)
+	inv := newInvoice("inv_audit", sellerID, buyerID)
+	require.NoError(t, repo.Save(ctx, inv))
+
+	view, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.False(t, view.IsDeleted)
+	require.True(t, view.CreatedAt.After(before),
+		"CreatedAt %v should be after %v", view.CreatedAt, before)
+	require.WithinDuration(t, view.CreatedAt, view.UpdatedAt, time.Second)
+}
+
+func TestInvoice_SoftDelete_HidesFromFetch(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	inv := newInvoice("inv_soft_delete", sellerID, buyerID)
+	require.NoError(t, repo.Save(ctx, inv))
+
+	require.NoError(t, testDB.Exec(
+		`UPDATE pii_invoices SET is_deleted = TRUE WHERE invoice_id = ?`, inv.InvoiceId,
+	).Error)
+
+	_, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, gorm.ErrRecordNotFound),
+		"soft-deleted invoice must be invisible to Fetch, got %v", err)
+
+	got, err := repo.Exists(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.False(t, got, "Exists must return false for soft-deleted invoice")
 }
 
 // Compile-time guard to make sure the user import isn't dropped by goimports.

@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS pii_invoices (
   seller_id TEXT,
   buyer_id TEXT,
   price JSONB,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
   PRIMARY KEY (invoice_id),
   FOREIGN KEY (seller_id) REFERENCES pii_users(user_id),
   FOREIGN KEY (buyer_id) REFERENCES pii_users(user_id)
@@ -51,7 +54,10 @@ CREATE OR REPLACE VIEW invoices AS
     p.buyer_id,
     c_amount.field_value AS amount,
     c_metadata.field_value::jsonb AS metadata,
-    p.price
+    p.price,
+    p.created_at,
+    p.updated_at,
+    p.is_deleted
   FROM pii_invoices p
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_seller_gst' ORDER BY key, field_name, version DESC) c_hashed_seller_gst ON p.invoice_id = c_hashed_seller_gst.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_buyer_gst' ORDER BY key, field_name, version DESC) c_hashed_buyer_gst ON p.invoice_id = c_hashed_buyer_gst.key

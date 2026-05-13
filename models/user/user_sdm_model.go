@@ -8,10 +8,13 @@ import (
 )
 
 type UserPii struct {
-	Id     int64  `gorm:"column:id;primaryKey;autoIncrement"`
-	UserId string `gorm:"column:user_id;uniqueIndex"`
-	Email  string `gorm:"column:email;uniqueIndex"`
-	Name   string `gorm:"column:name"`
+	Id        int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	UserId    string    `gorm:"column:user_id;uniqueIndex"`
+	Email     string    `gorm:"column:email;uniqueIndex"`
+	Name      string    `gorm:"column:name"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
+	IsDeleted bool      `gorm:"column:is_deleted;default:false"`
 }
 
 type UserChain struct {
@@ -24,14 +27,17 @@ type UserChain struct {
 }
 
 type UserView struct {
-	Id          int64  `gorm:"column:id"`
-	UserId      string `gorm:"column:user_id"`
-	Email       string `gorm:"column:email"`
-	HashedEmail string `gorm:"column:hashed_email"`
-	Name        string `gorm:"column:name"`
-	Pan         string `gorm:"column:pan"`
-	Country     string `gorm:"column:country"`
-	TxHash      string `gorm:"column:tx_hash"`
+	Id          int64     `gorm:"column:id"`
+	UserId      string    `gorm:"column:user_id"`
+	Email       string    `gorm:"column:email"`
+	HashedEmail string    `gorm:"column:hashed_email"`
+	Name        string    `gorm:"column:name"`
+	Pan         string    `gorm:"column:pan"`
+	Country     string    `gorm:"column:country"`
+	CreatedAt   time.Time `gorm:"column:created_at"`
+	UpdatedAt   time.Time `gorm:"column:updated_at"`
+	IsDeleted   bool      `gorm:"column:is_deleted"`
+	TxHash      string    `gorm:"column:tx_hash"`
 }
 
 func (UserPii) TableName() string   { return "pii_users" }

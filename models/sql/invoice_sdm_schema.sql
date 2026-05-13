@@ -55,6 +55,7 @@ CREATE OR REPLACE VIEW invoices AS
     c_amount.field_value AS amount,
     c_metadata.field_value::jsonb AS metadata,
     p.price,
+    c_tags.field_value AS tags,
     p.created_at,
     p.updated_at,
     p.is_deleted
@@ -63,5 +64,6 @@ CREATE OR REPLACE VIEW invoices AS
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_buyer_gst' ORDER BY key, field_name, version DESC) c_hashed_buyer_gst ON p.invoice_id = c_hashed_buyer_gst.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='amount' ORDER BY key, field_name, version DESC) c_amount ON p.invoice_id = c_amount.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='metadata' ORDER BY key, field_name, version DESC) c_metadata ON p.invoice_id = c_metadata.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='tags' ORDER BY key, field_name, version DESC) c_tags ON p.invoice_id = c_tags.key
 ;
 

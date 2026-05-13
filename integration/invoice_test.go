@@ -272,5 +272,100 @@ func TestInvoice_SoftDelete_HidesFromFetch(t *testing.T) {
 	require.False(t, got, "Exists must return false for soft-deleted invoice")
 }
 
+// ── Repeated proto field (pg array) support ──────────────────────────────────
+// These exercise the pq.StringArray view field + pgArrayLiteral chain writer
+// for `repeated string tags = 9` on Invoice. The view does NOT cast the chain's
+// TEXT field_value to text[]; pq.StringArray.Scan parses the {a,b,c} literal
+// from raw text regardless, which is what makes the round-trip work today.
+
+func TestInvoice_RepeatedField_RoundTrip(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	inv := newInvoice("inv_tags", sellerID, buyerID)
+	inv.Tags = []string{"urgent", "paid", "Q4"}
+	require.NoError(t, repo.Save(ctx, inv))
+
+	view, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.Equal(t, []string{"urgent", "paid", "Q4"}, []string(view.Tags))
+}
+
+func TestInvoice_RepeatedField_SingleElement(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	inv := newInvoice("inv_tags_one", sellerID, buyerID)
+	inv.Tags = []string{"solo"}
+	require.NoError(t, repo.Save(ctx, inv))
+
+	view, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.Equal(t, []string{"solo"}, []string(view.Tags))
+}
+
+func TestInvoice_RepeatedField_Empty(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	inv := newInvoice("inv_tags_empty", sellerID, buyerID)
+	inv.Tags = []string{}
+	require.NoError(t, repo.Save(ctx, inv))
+
+	view, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.Empty(t, view.Tags, "empty slice should round-trip as an empty array")
+
+	// Confirm the chain row stores the literal `{}`.
+	var stored string
+	require.NoError(t, testDB.Table("chain_invoices").
+		Where("key = ? AND field_name = ?", inv.InvoiceId, "tags").
+		Select("field_value").Scan(&stored).Error)
+	require.Equal(t, "{}", stored)
+}
+
+func TestInvoice_RepeatedField_Nil(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	// Tags left at the proto zero-value (nil). pgArrayLiteral(nil) yields "{}"
+	// — same wire format as an empty slice — so Fetch returns an empty array.
+	inv := newInvoice("inv_tags_nil", sellerID, buyerID)
+	require.Nil(t, inv.Tags)
+	require.NoError(t, repo.Save(ctx, inv))
+
+	view, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.Empty(t, view.Tags)
+}
+
+func TestInvoice_RepeatedField_ChainStorage(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	inv := newInvoice("inv_tags_chain", sellerID, buyerID)
+	inv.Tags = []string{"a", "b", "c"}
+	require.NoError(t, repo.Save(ctx, inv))
+
+	// pgArrayLiteral emits "{a,b,c}" — the Postgres array text literal.
+	// Asserted directly against chain_invoices so any change to that helper
+	// (escaping, quoting) is caught here.
+	var stored string
+	require.NoError(t, testDB.Table("chain_invoices").
+		Where("key = ? AND field_name = ?", inv.InvoiceId, "tags").
+		Select("field_value").Scan(&stored).Error)
+	require.Equal(t, "{a,b,c}", stored)
+}
+
 // Compile-time guard to make sure the user import isn't dropped by goimports.
 var _ = (*user.User)(nil)

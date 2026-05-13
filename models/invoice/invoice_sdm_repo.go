@@ -74,6 +74,13 @@ func (r *InvoiceRepo) SaveChain(ctx context.Context, model *Invoice) error {
 		}).Error; err != nil {
 			return err
 		}
+		if err := tx.Create(&InvoiceChain{
+			Key:        compositeKey,
+			FieldName:  "tags",
+			FieldValue: pgArrayLiteral(model.Tags),
+		}).Error; err != nil {
+			return err
+		}
 		return nil
 	})
 }
@@ -125,6 +132,13 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 			Key:        compositeKey,
 			FieldName:  "metadata",
 			FieldValue: string(model.Metadata),
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&InvoiceChain{
+			Key:        compositeKey,
+			FieldName:  "tags",
+			FieldValue: pgArrayLiteral(model.Tags),
 		}).Error; err != nil {
 			return err
 		}

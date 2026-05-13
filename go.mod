@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/jinuthankachan/sdm v0.0.0-20260129114410-4f341b17d683
+	github.com/lib/pq v1.10.9
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0

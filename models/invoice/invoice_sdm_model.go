@@ -5,6 +5,7 @@ package invoice
 import (
 	"time"
 	"gorm.io/datatypes"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -40,6 +41,7 @@ type InvoiceView struct {
 	Amount          int64          `gorm:"column:amount"`
 	Metadata        datatypes.JSON `gorm:"column:metadata"`
 	Price           *Money         `gorm:"column:price;serializer:protojson"`
+	Tags            pq.StringArray `gorm:"column:tags;type:text[]"`
 	CreatedAt       time.Time      `gorm:"column:created_at"`
 	UpdatedAt       time.Time      `gorm:"column:updated_at"`
 	IsDeleted       bool           `gorm:"column:is_deleted"`

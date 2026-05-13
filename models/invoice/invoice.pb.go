@@ -32,6 +32,7 @@ type Invoice struct {
 	Amount        int64                  `protobuf:"varint,6,opt,name=amount,proto3" json:"amount,omitempty"`
 	Metadata      string                 `protobuf:"bytes,7,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	Price         *Money                 `protobuf:"bytes,8,opt,name=price,proto3" json:"price,omitempty"`
+	Tags          []string               `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -122,6 +123,13 @@ func (x *Invoice) GetPrice() *Money {
 	return nil
 }
 
+func (x *Invoice) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
 type Money struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Value         int64                  `protobuf:"varint,1,opt,name=value,proto3" json:"value,omitempty"`
@@ -178,7 +186,7 @@ var File_invoice_invoice_proto protoreflect.FileDescriptor
 
 const file_invoice_invoice_proto_rawDesc = "" +
 	"\n" +
-	"\x15invoice/invoice.proto\x12\ainvoice\x1a!proto/sdmprotos/annotations.proto\"\xc8\x02\n" +
+	"\x15invoice/invoice.proto\x12\ainvoice\x1a!proto/sdmprotos/annotations.proto\"\xdc\x02\n" +
 	"\aInvoice\x12'\n" +
 	"\n" +
 	"invoice_id\x18\x01 \x01(\tB\b\x80\xb5\x18\x01\x88\xb5\x18\x01R\tinvoiceId\x12'\n" +
@@ -189,7 +197,8 @@ const file_invoice_invoice_proto_rawDesc = "" +
 	"\bbuyer_id\x18\x05 \x01(\tB\x10\xb2\xb5\x18\fUser.user_idR\abuyerId\x12\x16\n" +
 	"\x06amount\x18\x06 \x01(\x03R\x06amount\x12 \n" +
 	"\bmetadata\x18\a \x01(\tB\x04\xc0\xb5\x18\x01R\bmetadata\x12.\n" +
-	"\x05price\x18\b \x01(\v2\x0e.invoice.MoneyB\b\x90\xb5\x18\x01\xc0\xb5\x18\x01R\x05price\"1\n" +
+	"\x05price\x18\b \x01(\v2\x0e.invoice.MoneyB\b\x90\xb5\x18\x01\xc0\xb5\x18\x01R\x05price\x12\x12\n" +
+	"\x04tags\x18\t \x03(\tR\x04tags\"1\n" +
 	"\x05Money\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\x03R\x05value\x12\x12\n" +
 	"\x04unit\x18\x02 \x01(\tR\x04unitB\x15Z\x13demo/models/invoiceb\x06proto3"

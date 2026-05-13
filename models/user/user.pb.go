@@ -24,7 +24,7 @@ const (
 
 type User struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	Email         string                 `protobuf:"bytes,3,opt,name=email,proto3" json:"email,omitempty"`
 	Name          string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
@@ -64,11 +64,11 @@ func (*User) Descriptor() ([]byte, []int) {
 	return file_user_user_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *User) GetId() string {
+func (x *User) GetId() int64 {
 	if x != nil {
 		return x.Id
 	}
-	return ""
+	return 0
 }
 
 func (x *User) GetUserId() string {
@@ -110,10 +110,10 @@ var File_user_user_proto protoreflect.FileDescriptor
 
 const file_user_user_proto_rawDesc = "" +
 	"\n" +
-	"\x0fuser/user.proto\x12\x04user\x1a!proto/sdmprotos/annotations.proto\"\xb3\x01\n" +
+	"\x0fuser/user.proto\x12\x04user\x1a!proto/sdmprotos/annotations.proto\"\xb7\x01\n" +
 	"\x04User\x12\x18\n" +
-	"\x02id\x18\x01 \x01(\tB\b\x80\xb5\x18\x01\xb8\xb5\x18\x01R\x02id\x12!\n" +
-	"\auser_id\x18\x02 \x01(\tB\b\x88\xb5\x18\x01\x90\xb5\x18\x01R\x06userId\x12\"\n" +
+	"\x02id\x18\x01 \x01(\x03B\b\x80\xb5\x18\x01\xb8\xb5\x18\x01R\x02id\x12%\n" +
+	"\auser_id\x18\x02 \x01(\tB\f\x88\xb5\x18\x01\x90\xb5\x18\x01\xa8\xb5\x18\x01R\x06userId\x12\"\n" +
 	"\x05email\x18\x03 \x01(\tB\f\x90\xb5\x18\x01\xa0\xb5\x18\x01\xa8\xb5\x18\x01R\x05email\x12\x18\n" +
 	"\x04name\x18\x05 \x01(\tB\x04\x90\xb5\x18\x01R\x04name\x12\x16\n" +
 	"\x03pan\x18\x06 \x01(\tB\x04\xa8\xb5\x18\x01R\x03pan\x12\x18\n" +

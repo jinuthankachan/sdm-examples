@@ -8,8 +8,8 @@ import (
 )
 
 type UserPii struct {
-	Id     string `gorm:"column:id;primaryKey;autoIncrement"`
-	UserId string `gorm:"column:user_id"`
+	Id     int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	UserId string `gorm:"column:user_id;uniqueIndex"`
 	Email  string `gorm:"column:email;uniqueIndex"`
 	Name   string `gorm:"column:name"`
 }
@@ -24,7 +24,7 @@ type UserChain struct {
 }
 
 type UserView struct {
-	Id          string `gorm:"column:id"`
+	Id          int64  `gorm:"column:id"`
 	UserId      string `gorm:"column:user_id"`
 	Email       string `gorm:"column:email"`
 	HashedEmail string `gorm:"column:hashed_email"`

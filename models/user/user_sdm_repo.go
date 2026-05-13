@@ -108,9 +108,17 @@ func (r *UserRepo) Save(ctx context.Context, model *User) error {
 	})
 }
 
-func (r *UserRepo) Fetch(ctx context.Context, id string) (*UserView, error) {
+func (r *UserRepo) Fetch(ctx context.Context, id int64) (*UserView, error) {
 	var view UserView
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&view).Error; err != nil {
+		return nil, err
+	}
+	return &view, nil
+}
+
+func (r *UserRepo) FetchByUserId(ctx context.Context, userId string) (*UserView, error) {
+	var view UserView
+	if err := r.db.WithContext(ctx).Where("user_id = ?", userId).First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -132,9 +140,17 @@ func (r *UserRepo) FetchByPan(ctx context.Context, pan string) (*UserView, error
 	return &view, nil
 }
 
-func (r *UserRepo) Exists(ctx context.Context, id string) (bool, error) {
+func (r *UserRepo) Exists(ctx context.Context, id int64) (bool, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (r *UserRepo) ExistsByUserId(ctx context.Context, userId string) (bool, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("user_id = ?", userId).Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil

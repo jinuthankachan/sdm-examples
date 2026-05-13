@@ -40,7 +40,6 @@ func main() {
 	_ = ctx
 
 	u1 := &user.User{
-		Id:      "u_1",
 		UserId:  "user_1",
 		Email:   "john@doe.com",
 		Name:    "John Doe",
@@ -50,7 +49,6 @@ func main() {
 	userRepo.Save(ctx, u1)
 
 	u2 := &user.User{
-		Id:      "u_2",
 		UserId:  "user_2",
 		Email:   "jane@doe.com",
 		Name:    "Jane Doe",
@@ -62,8 +60,8 @@ func main() {
 	// Attempt a Save (this will fail at runtime if tables don't exist, but proves compilation)
 	i := &invoice.Invoice{
 		InvoiceId: "inv_1",
-		SellerId:  u1.Id,
-		BuyerId:   u2.Id,
+		SellerId:  u1.UserId,
+		BuyerId:   u2.UserId,
 		Amount:    100,
 		Price: &invoice.Money{
 			Value: 100,

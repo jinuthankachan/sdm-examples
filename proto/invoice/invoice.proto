@@ -10,8 +10,8 @@ message Invoice {
   string invoice_id = 1 [(sdm.primary_key) = true, (sdm.chain_identifier_key) = true];
   string seller_gst = 2 [(sdm.pii) = true, (sdm.hashed) = true];
   string buyer_gst = 3 [(sdm.pii) = true, (sdm.hashed) = true];
-  string seller_id = 4 [(sdm.references) = "user.id"];
-  string buyer_id = 5 [(sdm.references) = "user.id"];
+  string seller_id = 4 [(sdm.references) = "User.user_id"];
+  string buyer_id = 5 [(sdm.references) = "User.user_id"];
   int64 amount = 6;
   string metadata = 7 [(sdm.json) = true];
   Money price = 8 [(sdm.pii) = true, (sdm.json) = true];

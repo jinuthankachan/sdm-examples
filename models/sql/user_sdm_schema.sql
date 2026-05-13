@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS pii_users (
   email TEXT,
   name TEXT,
   PRIMARY KEY (id),
+  UNIQUE (user_id),
   UNIQUE (email)
 );
 

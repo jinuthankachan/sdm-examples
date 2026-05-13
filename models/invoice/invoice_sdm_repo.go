@@ -25,6 +25,8 @@ func (r *InvoiceRepo) SavePii(ctx context.Context, model *Invoice) error {
 			InvoiceId: model.InvoiceId,
 			SellerGst: model.SellerGst,
 			BuyerGst:  model.BuyerGst,
+			SellerId:  model.SellerId,
+			BuyerId:   model.BuyerId,
 			Price:     model.Price,
 		}
 		if err := tx.Create(&pii).Error; err != nil {
@@ -60,20 +62,6 @@ func (r *InvoiceRepo) SaveChain(ctx context.Context, model *Invoice) error {
 		}
 		if err := tx.Create(&InvoiceChain{
 			Key:        compositeKey,
-			FieldName:  "seller_id",
-			FieldValue: fmt.Sprintf("%v", model.SellerId),
-		}).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "buyer_id",
-			FieldValue: fmt.Sprintf("%v", model.BuyerId),
-		}).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
 			FieldName:  "amount",
 			FieldValue: fmt.Sprintf("%v", model.Amount),
 		}).Error; err != nil {
@@ -96,6 +84,8 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 			InvoiceId: model.InvoiceId,
 			SellerGst: model.SellerGst,
 			BuyerGst:  model.BuyerGst,
+			SellerId:  model.SellerId,
+			BuyerId:   model.BuyerId,
 			Price:     model.Price,
 		}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&pii).Error; err != nil {
@@ -121,20 +111,6 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 			Key:        compositeKey,
 			FieldName:  "hashed_buyer_gst",
 			FieldValue: hashed_BuyerGst,
-		}).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "seller_id",
-			FieldValue: fmt.Sprintf("%v", model.SellerId),
-		}).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "buyer_id",
-			FieldValue: fmt.Sprintf("%v", model.BuyerId),
 		}).Error; err != nil {
 			return err
 		}

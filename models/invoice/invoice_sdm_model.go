@@ -12,6 +12,8 @@ type InvoicePii struct {
 	InvoiceId string `gorm:"column:invoice_id;primaryKey"`
 	SellerGst string `gorm:"column:seller_gst"`
 	BuyerGst  string `gorm:"column:buyer_gst"`
+	SellerId  string `gorm:"column:seller_id"`
+	BuyerId   string `gorm:"column:buyer_id"`
 	Price     *Money `gorm:"column:price;type:jsonb;serializer:protojson"`
 }
 

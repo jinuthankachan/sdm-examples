@@ -24,15 +24,14 @@ const (
 
 type Invoice struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	InvoiceNumber int64                  `protobuf:"varint,2,opt,name=invoice_number,json=invoiceNumber,proto3" json:"invoice_number,omitempty"`
-	SellerGst     string                 `protobuf:"bytes,3,opt,name=seller_gst,json=sellerGst,proto3" json:"seller_gst,omitempty"`
-	BuyerGst      string                 `protobuf:"bytes,4,opt,name=buyer_gst,json=buyerGst,proto3" json:"buyer_gst,omitempty"`
-	SellerName    string                 `protobuf:"bytes,5,opt,name=seller_name,json=sellerName,proto3" json:"seller_name,omitempty"`
-	BuyerName     string                 `protobuf:"bytes,6,opt,name=buyer_name,json=buyerName,proto3" json:"buyer_name,omitempty"`
-	Seller        string                 `protobuf:"bytes,7,opt,name=seller,proto3" json:"seller,omitempty"`
-	Buyer         string                 `protobuf:"bytes,8,opt,name=buyer,proto3" json:"buyer,omitempty"`
-	Amount        int64                  `protobuf:"varint,9,opt,name=amount,proto3" json:"amount,omitempty"`
+	InvoiceId     string                 `protobuf:"bytes,1,opt,name=invoice_id,json=invoiceId,proto3" json:"invoice_id,omitempty"`
+	SellerGst     string                 `protobuf:"bytes,2,opt,name=seller_gst,json=sellerGst,proto3" json:"seller_gst,omitempty"`
+	BuyerGst      string                 `protobuf:"bytes,3,opt,name=buyer_gst,json=buyerGst,proto3" json:"buyer_gst,omitempty"`
+	SellerId      string                 `protobuf:"bytes,4,opt,name=seller_id,json=sellerId,proto3" json:"seller_id,omitempty"`
+	BuyerId       string                 `protobuf:"bytes,5,opt,name=buyer_id,json=buyerId,proto3" json:"buyer_id,omitempty"`
+	Amount        int64                  `protobuf:"varint,6,opt,name=amount,proto3" json:"amount,omitempty"`
+	Metadata      string                 `protobuf:"bytes,7,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	Price         *Money                 `protobuf:"bytes,8,opt,name=price,proto3" json:"price,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -67,18 +66,11 @@ func (*Invoice) Descriptor() ([]byte, []int) {
 	return file_invoice_invoice_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Invoice) GetId() string {
+func (x *Invoice) GetInvoiceId() string {
 	if x != nil {
-		return x.Id
+		return x.InvoiceId
 	}
 	return ""
-}
-
-func (x *Invoice) GetInvoiceNumber() int64 {
-	if x != nil {
-		return x.InvoiceNumber
-	}
-	return 0
 }
 
 func (x *Invoice) GetSellerGst() string {
@@ -95,30 +87,16 @@ func (x *Invoice) GetBuyerGst() string {
 	return ""
 }
 
-func (x *Invoice) GetSellerName() string {
+func (x *Invoice) GetSellerId() string {
 	if x != nil {
-		return x.SellerName
+		return x.SellerId
 	}
 	return ""
 }
 
-func (x *Invoice) GetBuyerName() string {
+func (x *Invoice) GetBuyerId() string {
 	if x != nil {
-		return x.BuyerName
-	}
-	return ""
-}
-
-func (x *Invoice) GetSeller() string {
-	if x != nil {
-		return x.Seller
-	}
-	return ""
-}
-
-func (x *Invoice) GetBuyer() string {
-	if x != nil {
-		return x.Buyer
+		return x.BuyerId
 	}
 	return ""
 }
@@ -130,24 +108,91 @@ func (x *Invoice) GetAmount() int64 {
 	return 0
 }
 
+func (x *Invoice) GetMetadata() string {
+	if x != nil {
+		return x.Metadata
+	}
+	return ""
+}
+
+func (x *Invoice) GetPrice() *Money {
+	if x != nil {
+		return x.Price
+	}
+	return nil
+}
+
+type Money struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         int64                  `protobuf:"varint,1,opt,name=value,proto3" json:"value,omitempty"`
+	Unit          string                 `protobuf:"bytes,2,opt,name=unit,proto3" json:"unit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Money) Reset() {
+	*x = Money{}
+	mi := &file_invoice_invoice_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Money) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Money) ProtoMessage() {}
+
+func (x *Money) ProtoReflect() protoreflect.Message {
+	mi := &file_invoice_invoice_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Money.ProtoReflect.Descriptor instead.
+func (*Money) Descriptor() ([]byte, []int) {
+	return file_invoice_invoice_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Money) GetValue() int64 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+func (x *Money) GetUnit() string {
+	if x != nil {
+		return x.Unit
+	}
+	return ""
+}
+
 var File_invoice_invoice_proto protoreflect.FileDescriptor
 
 const file_invoice_invoice_proto_rawDesc = "" +
 	"\n" +
-	"\x15invoice/invoice.proto\x12\ainvoice\x1a!proto/sdmprotos/annotations.proto\"\xb6\x02\n" +
-	"\aInvoice\x12\x18\n" +
-	"\x02id\x18\x01 \x01(\tB\b\x80\xb5\x18\x01\x88\xb5\x18\x01R\x02id\x12/\n" +
-	"\x0einvoice_number\x18\x02 \x01(\x03B\b\x90\xb5\x18\x01\x98\xb5\x18\x01R\rinvoiceNumber\x12'\n" +
+	"\x15invoice/invoice.proto\x12\ainvoice\x1a!proto/sdmprotos/annotations.proto\"\xc8\x02\n" +
+	"\aInvoice\x12'\n" +
 	"\n" +
-	"seller_gst\x18\x03 \x01(\tB\b\x90\xb5\x18\x01\xa0\xb5\x18\x01R\tsellerGst\x12%\n" +
-	"\tbuyer_gst\x18\x04 \x01(\tB\b\x90\xb5\x18\x01\xa0\xb5\x18\x01R\bbuyerGst\x12%\n" +
-	"\vseller_name\x18\x05 \x01(\tB\x04\x90\xb5\x18\x01R\n" +
-	"sellerName\x12#\n" +
+	"invoice_id\x18\x01 \x01(\tB\b\x80\xb5\x18\x01\x88\xb5\x18\x01R\tinvoiceId\x12'\n" +
 	"\n" +
-	"buyer_name\x18\x06 \x01(\tB\x04\x90\xb5\x18\x01R\tbuyerName\x12\x16\n" +
-	"\x06seller\x18\a \x01(\tR\x06seller\x12\x14\n" +
-	"\x05buyer\x18\b \x01(\tR\x05buyer\x12\x16\n" +
-	"\x06amount\x18\t \x01(\x03R\x06amountB\x15Z\x13demo/models/invoiceb\x06proto3"
+	"seller_gst\x18\x02 \x01(\tB\b\x90\xb5\x18\x01\xa0\xb5\x18\x01R\tsellerGst\x12%\n" +
+	"\tbuyer_gst\x18\x03 \x01(\tB\b\x90\xb5\x18\x01\xa0\xb5\x18\x01R\bbuyerGst\x12-\n" +
+	"\tseller_id\x18\x04 \x01(\tB\x10\xb2\xb5\x18\fUser.user_idR\bsellerId\x12+\n" +
+	"\bbuyer_id\x18\x05 \x01(\tB\x10\xb2\xb5\x18\fUser.user_idR\abuyerId\x12\x16\n" +
+	"\x06amount\x18\x06 \x01(\x03R\x06amount\x12 \n" +
+	"\bmetadata\x18\a \x01(\tB\x04\xc0\xb5\x18\x01R\bmetadata\x12.\n" +
+	"\x05price\x18\b \x01(\v2\x0e.invoice.MoneyB\b\x90\xb5\x18\x01\xc0\xb5\x18\x01R\x05price\"1\n" +
+	"\x05Money\x12\x14\n" +
+	"\x05value\x18\x01 \x01(\x03R\x05value\x12\x12\n" +
+	"\x04unit\x18\x02 \x01(\tR\x04unitB\x15Z\x13demo/models/invoiceb\x06proto3"
 
 var (
 	file_invoice_invoice_proto_rawDescOnce sync.Once
@@ -161,16 +206,18 @@ func file_invoice_invoice_proto_rawDescGZIP() []byte {
 	return file_invoice_invoice_proto_rawDescData
 }
 
-var file_invoice_invoice_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_invoice_invoice_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_invoice_invoice_proto_goTypes = []any{
 	(*Invoice)(nil), // 0: invoice.Invoice
+	(*Money)(nil),   // 1: invoice.Money
 }
 var file_invoice_invoice_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	1, // 0: invoice.Invoice.price:type_name -> invoice.Money
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_invoice_invoice_proto_init() }
@@ -184,7 +231,7 @@ func file_invoice_invoice_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_invoice_invoice_proto_rawDesc), len(file_invoice_invoice_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

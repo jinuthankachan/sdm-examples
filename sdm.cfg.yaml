@@ -8,6 +8,7 @@ sdm-proto: "proto/"
 
 # List of proto files to generate
 user-protos:
+  - "proto/user/user.proto"
   - "proto/invoice/invoice.proto"
 
 # Directory where to write the generated files.

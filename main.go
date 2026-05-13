@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"demo/models/invoice"
+	"demo/models/user"
 )
 
 func main() {
@@ -17,6 +18,7 @@ func main() {
 	if err != nil {
 		panic("Failed to connect to database")
 	}
+	userRepo := user.NewUserRepo(db)
 
 	// 2. Initialize Repo
 	repo := invoice.NewInvoiceRepo(db)
@@ -37,21 +39,41 @@ func main() {
 	ctx := context.Background()
 	_ = ctx
 
+	u1 := &user.User{
+		UserId:  "user_1",
+		Email:   "john@doe.com",
+		Name:    "John Doe",
+		Pan:     "123456789",
+		Country: "US",
+	}
+	userRepo.Save(ctx, u1)
+
+	u2 := &user.User{
+		UserId:  "user_2",
+		Email:   "jane@doe.com",
+		Name:    "Jane Doe",
+		Pan:     "123456789",
+		Country: "US",
+	}
+	userRepo.Save(ctx, u2)
+
 	// Attempt a Save (this will fail at runtime if tables don't exist, but proves compilation)
-	u := &invoice.Invoice{
-		Id:            "i_1",
-		InvoiceNumber: 123456789,
-		SellerGst:     "123456789",
-		BuyerGst:      "123456789",
-		SellerName:    "John Doe",
-		BuyerName:     "John Doe",
+	i := &invoice.Invoice{
+		InvoiceId: "inv_1",
+		SellerId:  u1.UserId,
+		BuyerId:   u2.UserId,
+		Amount:    100,
+		Price: &invoice.Money{
+			Value: 100,
+			Unit:  "INR",
+		},
 	}
 
-	fmt.Printf("Created Invoice object: %+v\n", u)
+	fmt.Printf("Created Invoice object: %+v\n", i)
 	fmt.Printf("Repo initialized: %+v\n", repo)
 
 	// Uncomment to test runtime if tables existed
-	err = repo.Save(ctx, u)
+	err = repo.Save(ctx, i)
 	if err != nil {
 		panic(fmt.Errorf("failed to save invoice: %s", err.Error()))
 	}

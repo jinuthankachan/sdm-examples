@@ -271,7 +271,8 @@ func TestUser_AuditFields_Populated(t *testing.T) {
 
 	view, err := repo.Fetch(ctx, u.Id)
 	require.NoError(t, err)
-	require.False(t, view.IsDeleted)
+	require.False(t, view.DeletedAt.Valid,
+		"a freshly inserted row has NULL deleted_at; gorm.DeletedAt.Valid should be false")
 	require.True(t, view.CreatedAt.After(before),
 		"CreatedAt %v should be after %v", view.CreatedAt, before)
 	// On INSERT, GORM sets both timestamps to the same now(); ON CONFLICT DO
@@ -289,7 +290,7 @@ func TestUser_SoftDelete_HidesFromFetch(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, u))
 
 	require.NoError(t, testDB.Exec(
-		`UPDATE pii_users SET is_deleted = TRUE WHERE id = ?`, u.Id,
+		`UPDATE pii_users SET deleted_at = NOW() WHERE id = ?`, u.Id,
 	).Error)
 
 	_, err := repo.Fetch(ctx, u.Id)
@@ -307,7 +308,7 @@ func TestUser_SoftDelete_HidesFromFetchByEmail(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, u))
 
 	require.NoError(t, testDB.Exec(
-		`UPDATE pii_users SET is_deleted = TRUE WHERE id = ?`, u.Id,
+		`UPDATE pii_users SET deleted_at = NOW() WHERE id = ?`, u.Id,
 	).Error)
 
 	_, err := repo.FetchByEmail(ctx, u.Email)
@@ -324,7 +325,7 @@ func TestUser_SoftDelete_ExistsReturnsFalse(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, u))
 
 	require.NoError(t, testDB.Exec(
-		`UPDATE pii_users SET is_deleted = TRUE WHERE id = ?`, u.Id,
+		`UPDATE pii_users SET deleted_at = NOW() WHERE id = ?`, u.Id,
 	).Error)
 
 	got, err := repo.Exists(ctx, u.Id)
@@ -334,4 +335,52 @@ func TestUser_SoftDelete_ExistsReturnsFalse(t *testing.T) {
 	got, err = repo.ExistsByEmail(ctx, u.Email)
 	require.NoError(t, err)
 	require.False(t, got, "ExistsByEmail must return false for soft-deleted row")
+}
+
+func TestUser_SoftDelete_ViaGormDelete(t *testing.T) {
+	resetTables(t)
+	repo := user.NewUserRepo(testDB)
+	ctx := context.Background()
+
+	u := newUser("gorm_delete")
+	require.NoError(t, repo.Save(ctx, u))
+
+	// GORM's `.Delete()` on a model with gorm.DeletedAt soft-deletes (sets
+	// deleted_at = NOW()) instead of issuing a real DELETE. This proves the
+	// PII struct's DeletedAt field is wired correctly for the GORM API path.
+	require.NoError(t, testDB.Delete(&user.UserPii{Id: u.Id}).Error)
+
+	// The row should still exist on disk (raw count with .Unscoped).
+	var rawCount int64
+	require.NoError(t, testDB.Unscoped().Model(&user.UserPii{}).
+		Where("id = ?", u.Id).Count(&rawCount).Error)
+	require.Equal(t, int64(1), rawCount, "soft delete must keep the row physically")
+
+	// But the generated read methods should hide it.
+	_, err := repo.Fetch(ctx, u.Id)
+	require.True(t, errors.Is(err, gorm.ErrRecordNotFound),
+		"Fetch must not return a soft-deleted row, got %v", err)
+	got, err := repo.Exists(ctx, u.Id)
+	require.NoError(t, err)
+	require.False(t, got)
+}
+
+func TestTimestamps_AreTimestampTZ(t *testing.T) {
+	resetTables(t)
+	// Pin that the generator emits TIMESTAMP WITH TIME ZONE for all audit
+	// columns. Plain TIMESTAMP loses offset information and silently shifts
+	// values across host/server tz drift.
+	for _, tbl := range []string{"pii_users", "pii_invoices"} {
+		for _, col := range []string{"created_at", "updated_at", "deleted_at"} {
+			var dataType string
+			err := testDB.Raw(
+				`SELECT data_type FROM information_schema.columns
+				 WHERE table_name = ? AND column_name = ?`,
+				tbl, col,
+			).Scan(&dataType).Error
+			require.NoError(t, err)
+			require.Equal(t, "timestamp with time zone", dataType,
+				"%s.%s should be timestamptz, got %q", tbl, col, dataType)
+		}
+	}
 }

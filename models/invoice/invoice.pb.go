@@ -7,9 +7,10 @@
 package invoice
 
 import (
-	_ "github.com/jinuthankachan/sdm/sdmprotos"
+	_ "github.com/kapow-tech/sdm/sdmprotos"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -33,6 +34,8 @@ type Invoice struct {
 	Metadata      string                 `protobuf:"bytes,7,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	Price         *Money                 `protobuf:"bytes,8,opt,name=price,proto3" json:"price,omitempty"`
 	Tags          []string               `protobuf:"bytes,9,rep,name=tags,proto3" json:"tags,omitempty"`
+	Items         []*Money               `protobuf:"bytes,10,rep,name=items,proto3" json:"items,omitempty"`
+	TransferDate  *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=transfer_date,json=transferDate,proto3" json:"transfer_date,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -130,6 +133,20 @@ func (x *Invoice) GetTags() []string {
 	return nil
 }
 
+func (x *Invoice) GetItems() []*Money {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *Invoice) GetTransferDate() *timestamppb.Timestamp {
+	if x != nil {
+		return x.TransferDate
+	}
+	return nil
+}
+
 type Money struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Value         int64                  `protobuf:"varint,1,opt,name=value,proto3" json:"value,omitempty"`
@@ -186,7 +203,7 @@ var File_invoice_invoice_proto protoreflect.FileDescriptor
 
 const file_invoice_invoice_proto_rawDesc = "" +
 	"\n" +
-	"\x15invoice/invoice.proto\x12\ainvoice\x1a!proto/sdmprotos/annotations.proto\"\xdc\x02\n" +
+	"\x15invoice/invoice.proto\x12\ainvoice\x1a!proto/sdmprotos/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc3\x03\n" +
 	"\aInvoice\x12'\n" +
 	"\n" +
 	"invoice_id\x18\x01 \x01(\tB\b\x80\xb5\x18\x01\x88\xb5\x18\x01R\tinvoiceId\x12'\n" +
@@ -198,7 +215,10 @@ const file_invoice_invoice_proto_rawDesc = "" +
 	"\x06amount\x18\x06 \x01(\x03R\x06amount\x12 \n" +
 	"\bmetadata\x18\a \x01(\tB\x04\xc0\xb5\x18\x01R\bmetadata\x12.\n" +
 	"\x05price\x18\b \x01(\v2\x0e.invoice.MoneyB\b\x90\xb5\x18\x01\xc0\xb5\x18\x01R\x05price\x12\x12\n" +
-	"\x04tags\x18\t \x03(\tR\x04tags\"1\n" +
+	"\x04tags\x18\t \x03(\tR\x04tags\x12$\n" +
+	"\x05items\x18\n" +
+	" \x03(\v2\x0e.invoice.MoneyR\x05items\x12?\n" +
+	"\rtransfer_date\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\ftransferDate\"1\n" +
 	"\x05Money\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\x03R\x05value\x12\x12\n" +
 	"\x04unit\x18\x02 \x01(\tR\x04unitB\x15Z\x13demo/models/invoiceb\x06proto3"
@@ -217,16 +237,19 @@ func file_invoice_invoice_proto_rawDescGZIP() []byte {
 
 var file_invoice_invoice_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_invoice_invoice_proto_goTypes = []any{
-	(*Invoice)(nil), // 0: invoice.Invoice
-	(*Money)(nil),   // 1: invoice.Money
+	(*Invoice)(nil),               // 0: invoice.Invoice
+	(*Money)(nil),                 // 1: invoice.Money
+	(*timestamppb.Timestamp)(nil), // 2: google.protobuf.Timestamp
 }
 var file_invoice_invoice_proto_depIdxs = []int32{
 	1, // 0: invoice.Invoice.price:type_name -> invoice.Money
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 1: invoice.Invoice.items:type_name -> invoice.Money
+	2, // 2: invoice.Invoice.transfer_date:type_name -> google.protobuf.Timestamp
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_invoice_invoice_proto_init() }

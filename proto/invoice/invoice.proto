@@ -3,6 +3,7 @@ syntax = "proto3";
 package invoice;
 
 import "proto/sdmprotos/annotations.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "demo/models/invoice";
 
@@ -16,6 +17,8 @@ message Invoice {
   string metadata = 7 [(sdm.json) = true];
   Money price = 8 [(sdm.pii) = true, (sdm.json) = true];
   repeated string tags = 9;
+  repeated Money items = 10;
+  google.protobuf.Timestamp transfer_date = 13;
 }
 
 

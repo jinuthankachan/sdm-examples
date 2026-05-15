@@ -10,15 +10,15 @@ import (
 )
 
 type InvoicePii struct {
-	InvoiceId string    `gorm:"column:invoice_id;primaryKey"`
-	SellerGst string    `gorm:"column:seller_gst"`
-	BuyerGst  string    `gorm:"column:buyer_gst"`
-	SellerId  string    `gorm:"column:seller_id"`
-	BuyerId   string    `gorm:"column:buyer_id"`
-	Price     *Money    `gorm:"column:price;type:jsonb;serializer:protojson"`
-	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt time.Time `gorm:"column:updated_at;autoUpdateTime"`
-	IsDeleted bool      `gorm:"column:is_deleted;default:false"`
+	InvoiceId string         `gorm:"column:invoice_id;primaryKey"`
+	SellerGst string         `gorm:"column:seller_gst"`
+	BuyerGst  string         `gorm:"column:buyer_gst"`
+	SellerId  string         `gorm:"column:seller_id"`
+	BuyerId   string         `gorm:"column:buyer_id"`
+	Price     *Money         `gorm:"column:price;type:jsonb;serializer:protojson"`
+	CreatedAt time.Time      `gorm:"column:created_at"`
+	UpdatedAt time.Time      `gorm:"column:updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"column:deleted_at"`
 }
 
 type InvoiceChain struct {
@@ -42,9 +42,11 @@ type InvoiceView struct {
 	Metadata        datatypes.JSON `gorm:"column:metadata"`
 	Price           *Money         `gorm:"column:price;serializer:protojson"`
 	Tags            pq.StringArray `gorm:"column:tags;type:text[]"`
+	Items           datatypes.JSON `gorm:"column:items;type:jsonb"`
+	TransferDate    time.Time      `gorm:"column:transfer_date"`
 	CreatedAt       time.Time      `gorm:"column:created_at"`
 	UpdatedAt       time.Time      `gorm:"column:updated_at"`
-	IsDeleted       bool           `gorm:"column:is_deleted"`
+	DeletedAt       gorm.DeletedAt `gorm:"column:deleted_at"`
 	TxHash          string         `gorm:"column:tx_hash"`
 }
 

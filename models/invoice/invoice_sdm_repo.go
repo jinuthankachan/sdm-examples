@@ -7,6 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"time"
+	"google.golang.org/protobuf/encoding/protojson"
+	"strings"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -40,6 +43,18 @@ func (r *InvoiceRepo) SaveChain(ctx context.Context, model *Invoice) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Save Chain Fields
 		compositeKey := fmt.Sprintf("%v", model.InvoiceId)
+		itemsJSON := []byte("[]")
+		if len(model.Items) > 0 {
+			_parts := make([]string, 0, len(model.Items))
+			for _, _item := range model.Items {
+				_b, err := protojson.Marshal(_item)
+				if err != nil {
+					return err
+				}
+				_parts = append(_parts, string(_b))
+			}
+			itemsJSON = []byte("[" + strings.Join(_parts, ",") + "]")
+		}
 		// Hash SellerGst
 		h_SellerGst := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
 		hashed_SellerGst := hex.EncodeToString(h_SellerGst[:])
@@ -78,6 +93,20 @@ func (r *InvoiceRepo) SaveChain(ctx context.Context, model *Invoice) error {
 			Key:        compositeKey,
 			FieldName:  "tags",
 			FieldValue: pgArrayLiteral(model.Tags),
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&InvoiceChain{
+			Key:        compositeKey,
+			FieldName:  "items",
+			FieldValue: string(itemsJSON),
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&InvoiceChain{
+			Key:        compositeKey,
+			FieldName:  "transfer_date",
+			FieldValue: model.TransferDate.AsTime().Format(time.RFC3339Nano),
 		}).Error; err != nil {
 			return err
 		}
@@ -101,6 +130,18 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 
 		// Save Chain Fields
 		compositeKey := fmt.Sprintf("%v", model.InvoiceId)
+		itemsJSON := []byte("[]")
+		if len(model.Items) > 0 {
+			_parts := make([]string, 0, len(model.Items))
+			for _, _item := range model.Items {
+				_b, err := protojson.Marshal(_item)
+				if err != nil {
+					return err
+				}
+				_parts = append(_parts, string(_b))
+			}
+			itemsJSON = []byte("[" + strings.Join(_parts, ",") + "]")
+		}
 		// Hash SellerGst
 		h_SellerGst := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
 		hashed_SellerGst := hex.EncodeToString(h_SellerGst[:])
@@ -142,13 +183,27 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 		}).Error; err != nil {
 			return err
 		}
+		if err := tx.Create(&InvoiceChain{
+			Key:        compositeKey,
+			FieldName:  "items",
+			FieldValue: string(itemsJSON),
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&InvoiceChain{
+			Key:        compositeKey,
+			FieldName:  "transfer_date",
+			FieldValue: model.TransferDate.AsTime().Format(time.RFC3339Nano),
+		}).Error; err != nil {
+			return err
+		}
 		return nil
 	})
 }
 
 func (r *InvoiceRepo) Fetch(ctx context.Context, invoiceId string) (*InvoiceView, error) {
 	var view InvoiceView
-	if err := r.db.WithContext(ctx).Where("invoice_id = ?", invoiceId).Where("is_deleted = ?", false).First(&view).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("invoice_id = ?", invoiceId).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -156,7 +211,7 @@ func (r *InvoiceRepo) Fetch(ctx context.Context, invoiceId string) (*InvoiceView
 
 func (r *InvoiceRepo) Exists(ctx context.Context, invoiceId string) (bool, error) {
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&InvoicePii{}).Where("invoice_id = ?", invoiceId).Where("is_deleted = ?", false).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&InvoicePii{}).Where("invoice_id = ?", invoiceId).Where("deleted_at IS NULL").Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil

@@ -68,7 +68,6 @@ func main() {
 			Unit:  "INR",
 		},
 	}
-
 	fmt.Printf("Created Invoice object: %+v\n", i)
 	fmt.Printf("Repo initialized: %+v\n", repo)
 

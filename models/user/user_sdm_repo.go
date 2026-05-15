@@ -110,7 +110,7 @@ func (r *UserRepo) Save(ctx context.Context, model *User) error {
 
 func (r *UserRepo) Fetch(ctx context.Context, id int64) (*UserView, error) {
 	var view UserView
-	if err := r.db.WithContext(ctx).Where("id = ?", id).Where("is_deleted = ?", false).First(&view).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -118,7 +118,7 @@ func (r *UserRepo) Fetch(ctx context.Context, id int64) (*UserView, error) {
 
 func (r *UserRepo) FetchByUserId(ctx context.Context, userId string) (*UserView, error) {
 	var view UserView
-	if err := r.db.WithContext(ctx).Where("user_id = ?", userId).Where("is_deleted = ?", false).First(&view).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("user_id = ?", userId).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -126,7 +126,7 @@ func (r *UserRepo) FetchByUserId(ctx context.Context, userId string) (*UserView,
 
 func (r *UserRepo) FetchByEmail(ctx context.Context, email string) (*UserView, error) {
 	var view UserView
-	if err := r.db.WithContext(ctx).Where("email = ?", email).Where("is_deleted = ?", false).First(&view).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("email = ?", email).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -134,7 +134,7 @@ func (r *UserRepo) FetchByEmail(ctx context.Context, email string) (*UserView, e
 
 func (r *UserRepo) FetchByPan(ctx context.Context, pan string) (*UserView, error) {
 	var view UserView
-	if err := r.db.WithContext(ctx).Where("pan = ?", pan).Where("is_deleted = ?", false).First(&view).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("pan = ?", pan).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -142,7 +142,7 @@ func (r *UserRepo) FetchByPan(ctx context.Context, pan string) (*UserView, error
 
 func (r *UserRepo) Exists(ctx context.Context, id int64) (bool, error) {
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("id = ?", id).Where("is_deleted = ?", false).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("id = ?", id).Where("deleted_at IS NULL").Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil
@@ -150,7 +150,7 @@ func (r *UserRepo) Exists(ctx context.Context, id int64) (bool, error) {
 
 func (r *UserRepo) ExistsByUserId(ctx context.Context, userId string) (bool, error) {
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("user_id = ?", userId).Where("is_deleted = ?", false).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("user_id = ?", userId).Where("deleted_at IS NULL").Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil
@@ -158,7 +158,7 @@ func (r *UserRepo) ExistsByUserId(ctx context.Context, userId string) (bool, err
 
 func (r *UserRepo) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("email = ?", email).Where("is_deleted = ?", false).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("email = ?", email).Where("deleted_at IS NULL").Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil
@@ -166,7 +166,7 @@ func (r *UserRepo) ExistsByEmail(ctx context.Context, email string) (bool, error
 
 func (r *UserRepo) ExistsByPan(ctx context.Context, pan string) (bool, error) {
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("pan = ?", pan).Where("is_deleted = ?", false).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&UserPii{}).Where("pan = ?", pan).Where("deleted_at IS NULL").Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
@@ -243,7 +244,8 @@ func TestInvoice_AuditFields_Populated(t *testing.T) {
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
-	require.False(t, view.IsDeleted)
+	require.False(t, view.DeletedAt.Valid,
+		"a freshly inserted row has NULL deleted_at; gorm.DeletedAt.Valid should be false")
 	require.True(t, view.CreatedAt.After(before),
 		"CreatedAt %v should be after %v", view.CreatedAt, before)
 	require.WithinDuration(t, view.CreatedAt, view.UpdatedAt, time.Second)
@@ -259,7 +261,7 @@ func TestInvoice_SoftDelete_HidesFromFetch(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, inv))
 
 	require.NoError(t, testDB.Exec(
-		`UPDATE pii_invoices SET is_deleted = TRUE WHERE invoice_id = ?`, inv.InvoiceId,
+		`UPDATE pii_invoices SET deleted_at = NOW() WHERE invoice_id = ?`, inv.InvoiceId,
 	).Error)
 
 	_, err := repo.Fetch(ctx, inv.InvoiceId)
@@ -365,6 +367,134 @@ func TestInvoice_RepeatedField_ChainStorage(t *testing.T) {
 		Where("key = ? AND field_name = ?", inv.InvoiceId, "tags").
 		Select("field_value").Scan(&stored).Error)
 	require.Equal(t, "{a,b,c}", stored)
+}
+
+// ── Repeated MessageType (chain-stored JSON array) support ───────────────────
+// These exercise the `repeated Money items = 10` field added to invoice.proto.
+// View column is datatypes.JSON (raw JSON-array bytes); chain rows store the
+// same bytes pre-marshaled element-wise via protojson, then string-joined.
+
+func TestInvoice_RepeatedMessage_RoundTrip(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	inv := newInvoice("inv_items", sellerID, buyerID)
+	inv.Items = []*invoice.Money{
+		{Value: 100, Unit: "USD"},
+		{Value: 50, Unit: "INR"},
+	}
+	require.NoError(t, repo.Save(ctx, inv))
+
+	view, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.NotEmpty(t, view.Items)
+	// protojson renders int64 as string. Compare semantically.
+	expected := `[{"value":"100","unit":"USD"},{"value":"50","unit":"INR"}]`
+	require.JSONEq(t, expected, string(view.Items))
+}
+
+func TestInvoice_RepeatedMessage_Empty(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	// Items at zero-value (nil). The generator initialises the local JSON var
+	// to the empty array literal "[]", so the chain row's field_value is a
+	// valid JSON array and the view's ::jsonb cast succeeds.
+	inv := newInvoice("inv_items_empty", sellerID, buyerID)
+	require.Nil(t, inv.Items)
+	require.NoError(t, repo.Save(ctx, inv))
+
+	view, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.JSONEq(t, "[]", string(view.Items),
+		"empty Items must round-trip as the JSON empty array")
+}
+
+func TestInvoice_RepeatedMessage_ChainStorage(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	inv := newInvoice("inv_items_chain", sellerID, buyerID)
+	inv.Items = []*invoice.Money{
+		{Value: 1, Unit: "EUR"},
+		{Value: 2, Unit: "GBP"},
+	}
+	require.NoError(t, repo.Save(ctx, inv))
+
+	// Chain row stores the JSON array literal verbatim — confirms the
+	// element-wise protojson.Marshal + strings.Join path in
+	// emitMessageJsonMarshals (generator.go:687-697).
+	var stored string
+	require.NoError(t, testDB.Table("chain_invoices").
+		Where("key = ? AND field_name = ?", inv.InvoiceId, "items").
+		Select("field_value").Scan(&stored).Error)
+	require.JSONEq(t,
+		`[{"value":"1","unit":"EUR"},{"value":"2","unit":"GBP"}]`,
+		stored)
+}
+
+// ── google.protobuf.Timestamp support ────────────────────────────────────────
+// `transfer_date` on Invoice is a chain-stored google.protobuf.Timestamp. The
+// generator maps it to time.Time in the model, TIMESTAMP WITH TIME ZONE in
+// the DB, and serializes through the chain as RFC3339Nano text cast back to
+// timestamptz by the view.
+
+func TestInvoice_Timestamp_RoundTrip(t *testing.T) {
+	resetTables(t)
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	// Postgres timestamptz has microsecond precision (6 digits), so the
+	// input has to use μs to round-trip exactly. RFC3339Nano emits up to
+	// nanoseconds but Postgres truncates anything past μs.
+	expected := time.Date(2026, time.March, 15, 14, 30, 45, 123456000, time.UTC)
+	inv := newInvoice("inv_ts", sellerID, buyerID)
+	inv.TransferDate = timestamppb.New(expected)
+	require.NoError(t, repo.Save(ctx, inv))
+
+	view, err := repo.Fetch(ctx, inv.InvoiceId)
+	require.NoError(t, err)
+	require.IsType(t, time.Time{}, view.TransferDate,
+		"View should expose google.protobuf.Timestamp as time.Time")
+	require.True(t, expected.Equal(view.TransferDate.UTC()),
+		"transfer_date round-trip mismatch: got %v, want %v",
+		view.TransferDate.UTC(), expected)
+}
+
+func TestInvoice_Timestamp_ColumnIsTimestampTZ(t *testing.T) {
+	resetTables(t)
+	// The chain field_value is TEXT, but the VIEW projects it as
+	// `c_transfer_date.field_value::timestamptz AS transfer_date`. Pin both
+	// the cast (via the view's data type) and the chain serialization format.
+	sellerID, buyerID := seedTwoUsers(t)
+	repo := invoice.NewInvoiceRepo(testDB)
+	ctx := context.Background()
+
+	inv := newInvoice("inv_ts_col", sellerID, buyerID)
+	inv.TransferDate = timestamppb.New(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
+	require.NoError(t, repo.Save(ctx, inv))
+
+	// The view exposes the column as timestamptz.
+	var viewType string
+	require.NoError(t, testDB.Raw(
+		`SELECT data_type FROM information_schema.columns
+		 WHERE table_name = 'invoices' AND column_name = 'transfer_date'`,
+	).Scan(&viewType).Error)
+	require.Equal(t, "timestamp with time zone", viewType)
+
+	// And the chain row stores the raw RFC3339Nano text.
+	var stored string
+	require.NoError(t, testDB.Table("chain_invoices").
+		Where("key = ? AND field_name = ?", inv.InvoiceId, "transfer_date").
+		Select("field_value").Scan(&stored).Error)
+	require.Equal(t, "2026-01-02T03:04:05Z", stored)
 }
 
 // Compile-time guard to make sure the user import isn't dropped by goimports.

@@ -3,7 +3,7 @@ module demo
 go 1.25.5
 
 require (
-	github.com/jinuthankachan/sdm v0.0.0-20260129114410-4f341b17d683
+	github.com/kapow-tech/sdm v0.1.4
 	github.com/lib/pq v1.10.9
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0
@@ -45,7 +45,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/kapow-tech/sdm v0.1.4 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
@@ -83,6 +82,6 @@ require (
 	gorm.io/driver/mysql v1.5.6 // indirect
 )
 
-tool github.com/jinuthankachan/sdm/cmd/sdm
+tool github.com/kapow-tech/sdm/cmd/sdm
 
-replace github.com/jinuthankachan/sdm => /home/jinu/workspace/opensource/sdm-tool/sdm
+replace github.com/kapow-tech/sdm => /home/jinu/workspace/opensource/sdm-tool/sdm

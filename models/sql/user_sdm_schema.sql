@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS pii_users (
   name TEXT,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMP WITH TIME ZONE NULL,
   PRIMARY KEY (id),
   UNIQUE (user_id),
   UNIQUE (email)
@@ -52,10 +52,12 @@ CREATE OR REPLACE VIEW users AS
     c_country.field_value AS country,
     p.created_at,
     p.updated_at,
-    p.is_deleted
+    p.deleted_at,
+    c_tx.tx_hash
   FROM pii_users p
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='hashed_email' ORDER BY key, field_name, version DESC) c_hashed_email ON p.user_id = c_hashed_email.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='pan' ORDER BY key, field_name, version DESC) c_pan ON p.user_id = c_pan.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='country' ORDER BY key, field_name, version DESC) c_country ON p.user_id = c_country.key
+  LEFT JOIN (SELECT DISTINCT ON (key) key, tx_hash FROM chain_users ORDER BY key, version DESC) c_tx ON p.user_id = c_tx.key
 ;
 

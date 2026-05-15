@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS pii_invoices (
   price JSONB,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMP WITH TIME ZONE NULL,
   PRIMARY KEY (invoice_id),
   FOREIGN KEY (seller_id) REFERENCES pii_users(user_id),
   FOREIGN KEY (buyer_id) REFERENCES pii_users(user_id)
@@ -56,14 +56,20 @@ CREATE OR REPLACE VIEW invoices AS
     c_metadata.field_value::jsonb AS metadata,
     p.price,
     c_tags.field_value AS tags,
+    c_items.field_value::jsonb AS items,
+    c_transfer_date.field_value::timestamptz AS transfer_date,
     p.created_at,
     p.updated_at,
-    p.is_deleted
+    p.deleted_at,
+    c_tx.tx_hash
   FROM pii_invoices p
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_seller_gst' ORDER BY key, field_name, version DESC) c_hashed_seller_gst ON p.invoice_id = c_hashed_seller_gst.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_buyer_gst' ORDER BY key, field_name, version DESC) c_hashed_buyer_gst ON p.invoice_id = c_hashed_buyer_gst.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='amount' ORDER BY key, field_name, version DESC) c_amount ON p.invoice_id = c_amount.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='metadata' ORDER BY key, field_name, version DESC) c_metadata ON p.invoice_id = c_metadata.key
   LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='tags' ORDER BY key, field_name, version DESC) c_tags ON p.invoice_id = c_tags.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='items' ORDER BY key, field_name, version DESC) c_items ON p.invoice_id = c_items.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='transfer_date' ORDER BY key, field_name, version DESC) c_transfer_date ON p.invoice_id = c_transfer_date.key
+  LEFT JOIN (SELECT DISTINCT ON (key) key, tx_hash FROM chain_invoices ORDER BY key, version DESC) c_tx ON p.invoice_id = c_tx.key
 ;
 

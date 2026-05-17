@@ -7,13 +7,44 @@ CREATE TABLE IF NOT EXISTS pii_invoices (
   seller_id TEXT,
   buyer_id TEXT,
   price JSONB,
+  pii_tags TEXT[],
+  pii_items JSONB,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted_at TIMESTAMP WITH TIME ZONE NULL,
+  created_by TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (invoice_id),
   FOREIGN KEY (seller_id) REFERENCES pii_users(user_id),
   FOREIGN KEY (buyer_id) REFERENCES pii_users(user_id)
 );
+
+CREATE TABLE IF NOT EXISTS audit_pii_invoices (
+  id BIGSERIAL PRIMARY KEY,
+  ref_id TEXT NOT NULL,
+  last_value JSONB NOT NULL,
+  change_type TEXT NOT NULL,
+  changed_by TEXT NOT NULL DEFAULT '',
+  changed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE FUNCTION audit_pii_invoices_log()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO audit_pii_invoices (ref_id, last_value, change_type, changed_by)
+  VALUES (
+    OLD.invoice_id::text,
+    row_to_json(OLD)::jsonb,
+    TG_OP,
+    COALESCE(current_setting('sdm.actor', true), '')
+  );
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS audit_pii_invoices_log_trigger ON pii_invoices;
+CREATE TRIGGER audit_pii_invoices_log_trigger
+AFTER UPDATE OR DELETE ON pii_invoices
+FOR EACH ROW EXECUTE FUNCTION audit_pii_invoices_log();
 
 CREATE TABLE IF NOT EXISTS chain_invoices (
   key TEXT NOT NULL,
@@ -21,9 +52,34 @@ CREATE TABLE IF NOT EXISTS chain_invoices (
   version BIGINT NOT NULL,
   tx_hash TEXT,
   field_value TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'CREATED' CHECK (status IN ('DRAFTED', 'CREATED', 'DROPPED')),
   PRIMARY KEY (key, field_name, version)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS chain_invoices_one_draft
+  ON chain_invoices (key, field_name)
+  WHERE status = 'DRAFTED';
+
+CREATE OR REPLACE FUNCTION chain_invoices_status_guard()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.status = NEW.status THEN
+    RETURN NEW;
+  ELSIF OLD.status = 'DRAFTED' AND NEW.status IN ('CREATED', 'DROPPED') THEN
+    RETURN NEW;
+  ELSE
+    RAISE EXCEPTION 'illegal chain status transition: % -> %', OLD.status, NEW.status
+      USING ERRCODE = '23514';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS chain_invoices_status_guard_trigger ON chain_invoices;
+CREATE TRIGGER chain_invoices_status_guard_trigger
+BEFORE UPDATE ON chain_invoices
+FOR EACH ROW EXECUTE FUNCTION chain_invoices_status_guard();
 
 CREATE OR REPLACE FUNCTION chain_invoices_set_version()
 RETURNS TRIGGER AS $$
@@ -57,19 +113,57 @@ CREATE OR REPLACE VIEW invoices AS
     p.price,
     c_tags.field_value AS tags,
     c_items.field_value::jsonb AS items,
+    p.pii_tags,
+    p.pii_items,
     c_transfer_date.field_value::timestamptz AS transfer_date,
     p.created_at,
     p.updated_at,
     p.deleted_at,
-    c_tx.tx_hash
+    p.created_by,
+    c_tx.tx_hash,
+    EXISTS (SELECT 1 FROM chain_invoices c WHERE c.key = p.invoice_id AND c.status = 'DRAFTED') AS has_pending_drafts
   FROM pii_invoices p
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_seller_gst' ORDER BY key, field_name, version DESC) c_hashed_seller_gst ON p.invoice_id = c_hashed_seller_gst.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_buyer_gst' ORDER BY key, field_name, version DESC) c_hashed_buyer_gst ON p.invoice_id = c_hashed_buyer_gst.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='amount' ORDER BY key, field_name, version DESC) c_amount ON p.invoice_id = c_amount.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='metadata' ORDER BY key, field_name, version DESC) c_metadata ON p.invoice_id = c_metadata.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='tags' ORDER BY key, field_name, version DESC) c_tags ON p.invoice_id = c_tags.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='items' ORDER BY key, field_name, version DESC) c_items ON p.invoice_id = c_items.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='transfer_date' ORDER BY key, field_name, version DESC) c_transfer_date ON p.invoice_id = c_transfer_date.key
-  LEFT JOIN (SELECT DISTINCT ON (key) key, tx_hash FROM chain_invoices ORDER BY key, version DESC) c_tx ON p.invoice_id = c_tx.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_seller_gst' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_hashed_seller_gst ON p.invoice_id = c_hashed_seller_gst.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_buyer_gst' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_hashed_buyer_gst ON p.invoice_id = c_hashed_buyer_gst.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='amount' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_amount ON p.invoice_id = c_amount.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='metadata' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_metadata ON p.invoice_id = c_metadata.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='tags' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_tags ON p.invoice_id = c_tags.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='items' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_items ON p.invoice_id = c_items.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='transfer_date' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_transfer_date ON p.invoice_id = c_transfer_date.key
+  LEFT JOIN (SELECT DISTINCT ON (key) key, tx_hash FROM chain_invoices WHERE status = 'CREATED' ORDER BY key, version DESC) c_tx ON p.invoice_id = c_tx.key
+;
+
+CREATE OR REPLACE VIEW invoices_with_drafts AS
+  SELECT
+    p.invoice_id,
+    p.seller_gst,
+    c_hashed_seller_gst.field_value AS hashed_seller_gst,
+    p.buyer_gst,
+    c_hashed_buyer_gst.field_value AS hashed_buyer_gst,
+    p.seller_id,
+    p.buyer_id,
+    c_amount.field_value AS amount,
+    c_metadata.field_value::jsonb AS metadata,
+    p.price,
+    c_tags.field_value AS tags,
+    c_items.field_value::jsonb AS items,
+    p.pii_tags,
+    p.pii_items,
+    c_transfer_date.field_value::timestamptz AS transfer_date,
+    p.created_at,
+    p.updated_at,
+    p.deleted_at,
+    p.created_by,
+    c_tx.tx_hash,
+    EXISTS (SELECT 1 FROM chain_invoices c WHERE c.key = p.invoice_id AND c.status = 'DRAFTED') AS has_pending_drafts
+  FROM pii_invoices p
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_seller_gst' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_hashed_seller_gst ON p.invoice_id = c_hashed_seller_gst.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='hashed_buyer_gst' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_hashed_buyer_gst ON p.invoice_id = c_hashed_buyer_gst.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='amount' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_amount ON p.invoice_id = c_amount.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='metadata' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_metadata ON p.invoice_id = c_metadata.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='tags' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_tags ON p.invoice_id = c_tags.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='items' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_items ON p.invoice_id = c_items.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_invoices WHERE field_name='transfer_date' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_transfer_date ON p.invoice_id = c_transfer_date.key
+  LEFT JOIN (SELECT DISTINCT ON (key) key, tx_hash FROM chain_invoices WHERE status <> 'DROPPED' ORDER BY key, version DESC) c_tx ON p.invoice_id = c_tx.key
 ;
 

@@ -6,10 +6,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 	"google.golang.org/protobuf/encoding/protojson"
 	"strings"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -22,8 +25,14 @@ func NewInvoiceRepo(db *gorm.DB) *InvoiceRepo {
 	return &InvoiceRepo{db: db}
 }
 
-func (r *InvoiceRepo) SavePii(ctx context.Context, model *Invoice) error {
+func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
 		pii := InvoicePii{
 			InvoiceId: model.InvoiceId,
 			SellerGst: model.SellerGst,
@@ -31,18 +40,26 @@ func (r *InvoiceRepo) SavePii(ctx context.Context, model *Invoice) error {
 			SellerId:  model.SellerId,
 			BuyerId:   model.BuyerId,
 			Price:     model.Price,
+			PiiTags:   pq.StringArray(model.PiiTags),
+			PiiItems:  model.PiiItems,
+			CreatedBy: _actor,
 		}
 		if err := tx.Create(&pii).Error; err != nil {
 			return err
 		}
-		return nil
-	})
-}
-
-func (r *InvoiceRepo) SaveChain(ctx context.Context, model *Invoice) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Save Chain Fields
+		// chain-drafts: stage chain fields as DRAFTED in the same transaction
 		compositeKey := fmt.Sprintf("%v", model.InvoiceId)
+		var _latestRows []struct {
+			FieldName  string
+			FieldValue string
+		}
+		if err := tx.Raw("SELECT DISTINCT ON (field_name) field_name, field_value FROM chain_invoices WHERE key = ? AND status = 'CREATED' ORDER BY field_name, version DESC", compositeKey).Scan(&_latestRows).Error; err != nil {
+			return err
+		}
+		_latest := make(map[string]string, len(_latestRows))
+		for _, _r := range _latestRows {
+			_latest[_r.FieldName] = _r.FieldValue
+		}
 		itemsJSON := []byte("[]")
 		if len(model.Items) > 0 {
 			_parts := make([]string, 0, len(model.Items))
@@ -55,67 +72,155 @@ func (r *InvoiceRepo) SaveChain(ctx context.Context, model *Invoice) error {
 			}
 			itemsJSON = []byte("[" + strings.Join(_parts, ",") + "]")
 		}
-		// Hash SellerGst
-		h_SellerGst := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
-		hashed_SellerGst := hex.EncodeToString(h_SellerGst[:])
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "hashed_seller_gst",
-			FieldValue: hashed_SellerGst,
-		}).Error; err != nil {
-			return err
+		{
+			// Hash SellerGst
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_seller_gst"]; !_ok || _prev != _hv {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_seller_gst",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		// Hash BuyerGst
-		h_BuyerGst := sha256.Sum256([]byte(fmt.Sprintf("%v", model.BuyerGst)))
-		hashed_BuyerGst := hex.EncodeToString(h_BuyerGst[:])
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "hashed_buyer_gst",
-			FieldValue: hashed_BuyerGst,
-		}).Error; err != nil {
-			return err
+		{
+			// Hash BuyerGst
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.BuyerGst)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_buyer_gst"]; !_ok || _prev != _hv {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_buyer_gst",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "amount",
-			FieldValue: fmt.Sprintf("%v", model.Amount),
-		}).Error; err != nil {
-			return err
+		{
+			_v := fmt.Sprintf("%v", model.Amount)
+			if _prev, _ok := _latest["amount"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "amount",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "metadata",
-			FieldValue: string(model.Metadata),
-		}).Error; err != nil {
-			return err
+		{
+			_v := string(model.Metadata)
+			if _prev, _ok := _latest["metadata"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "metadata",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "tags",
-			FieldValue: pgArrayLiteral(model.Tags),
-		}).Error; err != nil {
-			return err
+		{
+			_v := pgArrayLiteral(model.Tags)
+			if _prev, _ok := _latest["tags"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "tags",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "items",
-			FieldValue: string(itemsJSON),
-		}).Error; err != nil {
-			return err
+		{
+			_v := string(itemsJSON)
+			if _prev, _ok := _latest["items"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "items",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "transfer_date",
-			FieldValue: model.TransferDate.AsTime().Format(time.RFC3339Nano),
-		}).Error; err != nil {
-			return err
+		{
+			_v := model.TransferDate.AsTime().Format(time.RFC3339Nano)
+			if _prev, _ok := _latest["transfer_date"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "transfer_date",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
 		return nil
 	})
 }
 
-func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
+func (r *InvoiceRepo) Upsert(ctx context.Context, model *Invoice) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
 		pii := InvoicePii{
 			InvoiceId: model.InvoiceId,
 			SellerGst: model.SellerGst,
@@ -123,13 +228,29 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 			SellerId:  model.SellerId,
 			BuyerId:   model.BuyerId,
 			Price:     model.Price,
+			PiiTags:   pq.StringArray(model.PiiTags),
+			PiiItems:  model.PiiItems,
+			CreatedBy: _actor,
 		}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&pii).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "invoice_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"seller_gst", "buyer_gst", "seller_id", "buyer_id", "price", "pii_tags", "pii_items", "updated_at"}),
+		}).Create(&pii).Error; err != nil {
 			return err
 		}
-
-		// Save Chain Fields
+		// chain-drafts: stage chain fields as DRAFTED in the same transaction
 		compositeKey := fmt.Sprintf("%v", model.InvoiceId)
+		var _latestRows []struct {
+			FieldName  string
+			FieldValue string
+		}
+		if err := tx.Raw("SELECT DISTINCT ON (field_name) field_name, field_value FROM chain_invoices WHERE key = ? AND status = 'CREATED' ORDER BY field_name, version DESC", compositeKey).Scan(&_latestRows).Error; err != nil {
+			return err
+		}
+		_latest := make(map[string]string, len(_latestRows))
+		for _, _r := range _latestRows {
+			_latest[_r.FieldName] = _r.FieldValue
+		}
 		itemsJSON := []byte("[]")
 		if len(model.Items) > 0 {
 			_parts := make([]string, 0, len(model.Items))
@@ -142,68 +263,547 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 			}
 			itemsJSON = []byte("[" + strings.Join(_parts, ",") + "]")
 		}
-		// Hash SellerGst
-		h_SellerGst := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
-		hashed_SellerGst := hex.EncodeToString(h_SellerGst[:])
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "hashed_seller_gst",
-			FieldValue: hashed_SellerGst,
-		}).Error; err != nil {
-			return err
+		{
+			// Hash SellerGst
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_seller_gst"]; !_ok || _prev != _hv {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_seller_gst",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		// Hash BuyerGst
-		h_BuyerGst := sha256.Sum256([]byte(fmt.Sprintf("%v", model.BuyerGst)))
-		hashed_BuyerGst := hex.EncodeToString(h_BuyerGst[:])
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "hashed_buyer_gst",
-			FieldValue: hashed_BuyerGst,
-		}).Error; err != nil {
-			return err
+		{
+			// Hash BuyerGst
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.BuyerGst)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_buyer_gst"]; !_ok || _prev != _hv {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_buyer_gst",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "amount",
-			FieldValue: fmt.Sprintf("%v", model.Amount),
-		}).Error; err != nil {
-			return err
+		{
+			_v := fmt.Sprintf("%v", model.Amount)
+			if _prev, _ok := _latest["amount"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "amount",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "metadata",
-			FieldValue: string(model.Metadata),
-		}).Error; err != nil {
-			return err
+		{
+			_v := string(model.Metadata)
+			if _prev, _ok := _latest["metadata"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "metadata",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "tags",
-			FieldValue: pgArrayLiteral(model.Tags),
-		}).Error; err != nil {
-			return err
+		{
+			_v := pgArrayLiteral(model.Tags)
+			if _prev, _ok := _latest["tags"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "tags",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "items",
-			FieldValue: string(itemsJSON),
-		}).Error; err != nil {
-			return err
+		{
+			_v := string(itemsJSON)
+			if _prev, _ok := _latest["items"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "items",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
-		if err := tx.Create(&InvoiceChain{
-			Key:        compositeKey,
-			FieldName:  "transfer_date",
-			FieldValue: model.TransferDate.AsTime().Format(time.RFC3339Nano),
-		}).Error; err != nil {
-			return err
+		{
+			_v := model.TransferDate.AsTime().Format(time.RFC3339Nano)
+			if _prev, _ok := _latest["transfer_date"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "transfer_date",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
 		return nil
 	})
 }
 
-func (r *InvoiceRepo) Fetch(ctx context.Context, invoiceId string) (*InvoiceView, error) {
+func (r *InvoiceRepo) Update(ctx context.Context, model *Invoice) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
+		pii := InvoicePii{
+			InvoiceId: model.InvoiceId,
+			SellerGst: model.SellerGst,
+			BuyerGst:  model.BuyerGst,
+			SellerId:  model.SellerId,
+			BuyerId:   model.BuyerId,
+			Price:     model.Price,
+			PiiTags:   pq.StringArray(model.PiiTags),
+			PiiItems:  model.PiiItems,
+			CreatedBy: _actor,
+		}
+		_result := tx.Model(&InvoicePii{}).
+			Where("invoice_id = ?", model.InvoiceId).
+			Select([]string{"seller_gst", "buyer_gst", "seller_id", "buyer_id", "price", "pii_tags", "pii_items", "updated_at"}).
+			Updates(pii)
+		if _result.Error != nil {
+			return _result.Error
+		}
+		if _result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		// chain-drafts: stage chain fields as DRAFTED in the same transaction
+		compositeKey := fmt.Sprintf("%v", model.InvoiceId)
+		var _latestRows []struct {
+			FieldName  string
+			FieldValue string
+		}
+		if err := tx.Raw("SELECT DISTINCT ON (field_name) field_name, field_value FROM chain_invoices WHERE key = ? AND status = 'CREATED' ORDER BY field_name, version DESC", compositeKey).Scan(&_latestRows).Error; err != nil {
+			return err
+		}
+		_latest := make(map[string]string, len(_latestRows))
+		for _, _r := range _latestRows {
+			_latest[_r.FieldName] = _r.FieldValue
+		}
+		itemsJSON := []byte("[]")
+		if len(model.Items) > 0 {
+			_parts := make([]string, 0, len(model.Items))
+			for _, _item := range model.Items {
+				_b, err := protojson.Marshal(_item)
+				if err != nil {
+					return err
+				}
+				_parts = append(_parts, string(_b))
+			}
+			itemsJSON = []byte("[" + strings.Join(_parts, ",") + "]")
+		}
+		{
+			// Hash SellerGst
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_seller_gst"]; !_ok || _prev != _hv {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_seller_gst",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			// Hash BuyerGst
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.BuyerGst)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_buyer_gst"]; !_ok || _prev != _hv {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_buyer_gst",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Amount)
+			if _prev, _ok := _latest["amount"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "amount",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := string(model.Metadata)
+			if _prev, _ok := _latest["metadata"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "metadata",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := pgArrayLiteral(model.Tags)
+			if _prev, _ok := _latest["tags"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "tags",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := string(itemsJSON)
+			if _prev, _ok := _latest["items"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "items",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := model.TransferDate.AsTime().Format(time.RFC3339Nano)
+			if _prev, _ok := _latest["transfer_date"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "transfer_date",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func (r *InvoiceRepo) DraftChain(ctx context.Context, model *Invoice) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		compositeKey := fmt.Sprintf("%v", model.InvoiceId)
+		var _latestRows []struct {
+			FieldName  string
+			FieldValue string
+		}
+		if err := tx.Raw("SELECT DISTINCT ON (field_name) field_name, field_value FROM chain_invoices WHERE key = ? AND status = 'CREATED' ORDER BY field_name, version DESC", compositeKey).Scan(&_latestRows).Error; err != nil {
+			return err
+		}
+		_latest := make(map[string]string, len(_latestRows))
+		for _, _r := range _latestRows {
+			_latest[_r.FieldName] = _r.FieldValue
+		}
+		itemsJSON := []byte("[]")
+		if len(model.Items) > 0 {
+			_parts := make([]string, 0, len(model.Items))
+			for _, _item := range model.Items {
+				_b, err := protojson.Marshal(_item)
+				if err != nil {
+					return err
+				}
+				_parts = append(_parts, string(_b))
+			}
+			itemsJSON = []byte("[" + strings.Join(_parts, ",") + "]")
+		}
+		{
+			// Hash SellerGst
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.SellerGst)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_seller_gst"]; !_ok || _prev != _hv {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_seller_gst",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			// Hash BuyerGst
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.BuyerGst)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_buyer_gst"]; !_ok || _prev != _hv {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_buyer_gst",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Amount)
+			if _prev, _ok := _latest["amount"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "amount",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := string(model.Metadata)
+			if _prev, _ok := _latest["metadata"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "metadata",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := pgArrayLiteral(model.Tags)
+			if _prev, _ok := _latest["tags"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "tags",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := string(itemsJSON)
+			if _prev, _ok := _latest["items"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "items",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := model.TransferDate.AsTime().Format(time.RFC3339Nano)
+			if _prev, _ok := _latest["transfer_date"]; !_ok || _prev != _v {
+				_row := InvoiceChain{
+					Key:        compositeKey,
+					FieldName:  "transfer_date",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func (r *InvoiceRepo) CommitChain(ctx context.Context, invoiceId string, txHash string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
+		_key := fmt.Sprintf("%v", invoiceId)
+		return tx.Model(&InvoiceChain{}).
+			Where("key = ? AND status = ?", _key, "DRAFTED").
+			Updates(map[string]interface{}{"status": "CREATED", "tx_hash": txHash}).Error
+	})
+}
+
+func (r *InvoiceRepo) DropChain(ctx context.Context, invoiceId string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
+		_key := fmt.Sprintf("%v", invoiceId)
+		return tx.Model(&InvoiceChain{}).
+			Where("key = ? AND status = ?", _key, "DRAFTED").
+			Update("status", "DROPPED").Error
+	})
+}
+
+func (r *InvoiceRepo) Fetch(ctx context.Context, invoiceId string, drafted bool) (*InvoiceView, error) {
 	var view InvoiceView
-	if err := r.db.WithContext(ctx).Where("invoice_id = ?", invoiceId).Where("deleted_at IS NULL").First(&view).Error; err != nil {
+	_table := "invoices"
+	if drafted {
+		_table = "invoices_with_drafts"
+	}
+	if err := r.db.WithContext(ctx).Table(_table).Where("invoice_id = ?", invoiceId).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -215,4 +815,39 @@ func (r *InvoiceRepo) Exists(ctx context.Context, invoiceId string) (bool, error
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (r *InvoiceRepo) AuditLog(ctx context.Context, invoiceId string) ([]InvoicePiiAudit, error) {
+	var rows []InvoicePiiAudit
+	if err := r.db.WithContext(ctx).
+		Where("ref_id = ?", fmt.Sprintf("%v", invoiceId)).
+		Order("changed_at ASC, id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *InvoiceRepo) ChangeLog(ctx context.Context, invoiceId string) (ChangeLog, error) {
+	var rows []InvoiceChain
+	if err := r.db.WithContext(ctx).
+		Where("key = ?", fmt.Sprintf("%v", invoiceId)).
+		Order("field_name, version").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	log := make(ChangeLog)
+	for _, row := range rows {
+		if _, ok := log[row.FieldName]; !ok {
+			log[row.FieldName] = make(map[int64]ChangeLogEntry)
+		}
+		log[row.FieldName][row.Version] = ChangeLogEntry{
+			Value:     row.FieldValue,
+			Timestamp: row.CreatedAt,
+		}
+	}
+	return log, nil
 }

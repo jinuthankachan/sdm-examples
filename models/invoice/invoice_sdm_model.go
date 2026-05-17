@@ -7,6 +7,7 @@ import (
 	"gorm.io/datatypes"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type InvoicePii struct {
@@ -16,9 +17,12 @@ type InvoicePii struct {
 	SellerId  string         `gorm:"column:seller_id"`
 	BuyerId   string         `gorm:"column:buyer_id"`
 	Price     *Money         `gorm:"column:price;type:jsonb;serializer:protojson"`
+	PiiTags   pq.StringArray `gorm:"column:pii_tags;type:text[]"`
+	PiiItems  []*Money       `gorm:"column:pii_items;type:jsonb;serializer:protojsonArray"`
 	CreatedAt time.Time      `gorm:"column:created_at"`
 	UpdatedAt time.Time      `gorm:"column:updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"column:deleted_at"`
+	CreatedBy string         `gorm:"column:created_by"`
 }
 
 type InvoiceChain struct {
@@ -28,31 +32,48 @@ type InvoiceChain struct {
 	TxHash     string    `gorm:"column:tx_hash"`
 	FieldValue string    `gorm:"column:field_value"`
 	CreatedAt  time.Time `gorm:"column:created_at"`
+	CreatedBy  string    `gorm:"column:created_by"`
+	Status     string    `gorm:"column:status"`
 }
 
 type InvoiceView struct {
-	InvoiceId       string         `gorm:"column:invoice_id"`
-	SellerGst       string         `gorm:"column:seller_gst"`
-	HashedSellerGst string         `gorm:"column:hashed_seller_gst"`
-	BuyerGst        string         `gorm:"column:buyer_gst"`
-	HashedBuyerGst  string         `gorm:"column:hashed_buyer_gst"`
-	SellerId        string         `gorm:"column:seller_id"`
-	BuyerId         string         `gorm:"column:buyer_id"`
-	Amount          int64          `gorm:"column:amount"`
-	Metadata        datatypes.JSON `gorm:"column:metadata"`
-	Price           *Money         `gorm:"column:price;serializer:protojson"`
-	Tags            pq.StringArray `gorm:"column:tags;type:text[]"`
-	Items           datatypes.JSON `gorm:"column:items;type:jsonb"`
-	TransferDate    time.Time      `gorm:"column:transfer_date"`
-	CreatedAt       time.Time      `gorm:"column:created_at"`
-	UpdatedAt       time.Time      `gorm:"column:updated_at"`
-	DeletedAt       gorm.DeletedAt `gorm:"column:deleted_at"`
-	TxHash          string         `gorm:"column:tx_hash"`
+	InvoiceId        string         `gorm:"column:invoice_id"`
+	SellerGst        string         `gorm:"column:seller_gst"`
+	HashedSellerGst  string         `gorm:"column:hashed_seller_gst"`
+	BuyerGst         string         `gorm:"column:buyer_gst"`
+	HashedBuyerGst   string         `gorm:"column:hashed_buyer_gst"`
+	SellerId         string         `gorm:"column:seller_id"`
+	BuyerId          string         `gorm:"column:buyer_id"`
+	Amount           int64          `gorm:"column:amount"`
+	Metadata         datatypes.JSON `gorm:"column:metadata"`
+	Price            *Money         `gorm:"column:price;serializer:protojson"`
+	Tags             pq.StringArray `gorm:"column:tags;type:text[]"`
+	Items            []*Money       `gorm:"column:items;type:jsonb;serializer:protojsonArray"`
+	PiiTags          pq.StringArray `gorm:"column:pii_tags;type:text[]"`
+	PiiItems         []*Money       `gorm:"column:pii_items;type:jsonb;serializer:protojsonArray"`
+	TransferDate     time.Time      `gorm:"column:transfer_date"`
+	CreatedAt        time.Time      `gorm:"column:created_at"`
+	UpdatedAt        time.Time      `gorm:"column:updated_at"`
+	DeletedAt        gorm.DeletedAt `gorm:"column:deleted_at"`
+	CreatedBy        string         `gorm:"column:created_by"`
+	TxHash           string         `gorm:"column:tx_hash"`
+	HasPendingDrafts bool           `gorm:"column:has_pending_drafts"`
 }
 
 func (InvoicePii) TableName() string   { return "pii_invoices" }
 func (InvoiceChain) TableName() string { return "chain_invoices" }
 func (InvoiceView) TableName() string  { return "invoices" }
+
+type InvoicePiiAudit struct {
+	Id         int64          `gorm:"column:id;primaryKey;autoIncrement"`
+	RefId      string         `gorm:"column:ref_id"`
+	LastValue  datatypes.JSON `gorm:"column:last_value;type:jsonb"`
+	ChangeType string         `gorm:"column:change_type"`
+	ChangedBy  string         `gorm:"column:changed_by"`
+	ChangedAt  time.Time      `gorm:"column:changed_at"`
+}
+
+func (InvoicePiiAudit) TableName() string { return "audit_pii_invoices" }
 
 func (c *InvoiceChain) EnsureUnique(tx *gorm.DB) bool {
 	var count int64
@@ -61,4 +82,24 @@ func (c *InvoiceChain) EnsureUnique(tx *gorm.DB) bool {
 		return false
 	}
 	return count == 0
+}
+
+func (v *InvoiceView) AsBaseModel() *Invoice {
+	base := &Invoice{}
+	base.InvoiceId = v.InvoiceId
+	base.SellerGst = v.SellerGst
+	base.BuyerGst = v.BuyerGst
+	base.SellerId = v.SellerId
+	base.BuyerId = v.BuyerId
+	base.Amount = v.Amount
+	base.Metadata = string(v.Metadata)
+	base.Price = v.Price
+	base.Tags = []string(v.Tags)
+	base.Items = v.Items
+	base.PiiTags = []string(v.PiiTags)
+	base.PiiItems = v.PiiItems
+	if !v.TransferDate.IsZero() {
+		base.TransferDate = timestamppb.New(v.TransferDate)
+	}
+	return base
 }

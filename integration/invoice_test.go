@@ -1,3 +1,7 @@
+//go:build !chaindrafts
+
+// OFF-mode invoice tests; not compiled when -tags chaindrafts is in effect.
+
 package integration
 
 import (
@@ -64,7 +68,7 @@ func TestInvoice_Save_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	inv := newInvoice("inv1", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -83,7 +87,7 @@ func TestInvoice_HashedGsts_InView(t *testing.T) {
 	ctx := context.Background()
 
 	inv := newInvoice("inv_hash", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -104,7 +108,7 @@ func TestInvoice_PII_PriceMessage_RoundTrip(t *testing.T) {
 
 	inv := newInvoice("inv_price", sellerID, buyerID)
 	inv.Price = &invoice.Money{Value: 12345, Unit: "USD"}
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -130,7 +134,7 @@ func TestInvoice_Chain_MetadataString_RoundTrip(t *testing.T) {
 	expected := `{"trace_id":"abc-123","retries":3}`
 	inv := newInvoice("inv_meta", sellerID, buyerID)
 	inv.Metadata = expected
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -152,7 +156,7 @@ func TestInvoice_FK_Valid(t *testing.T) {
 	ctx := context.Background()
 
 	inv := newInvoice("inv_fk_ok", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 }
 
 func TestInvoice_FK_Violation_SellerMissing(t *testing.T) {
@@ -164,7 +168,7 @@ func TestInvoice_FK_Violation_SellerMissing(t *testing.T) {
 	ctx := context.Background()
 
 	inv := minimalInvoice("inv_fk_bad", "user_does_not_exist", buyer.UserId)
-	err := repo.Save(ctx, inv)
+	err := repo.SaveAll(ctx, inv, true)
 	require.Error(t, err, "save with non-existent seller_id should violate FK")
 	require.Contains(t, strings.ToLower(err.Error()), "foreign key")
 }
@@ -176,7 +180,7 @@ func TestInvoice_View_Combined(t *testing.T) {
 	ctx := context.Background()
 
 	inv := newInvoice("inv_view", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -193,28 +197,29 @@ func TestInvoice_View_Combined(t *testing.T) {
 	require.Equal(t, sha256Hex(inv.BuyerGst), view.HashedBuyerGst)
 }
 
-func TestInvoice_OnConflict_Idempotent(t *testing.T) {
+func TestInvoice_SaveAll_RepeatIsNoOp(t *testing.T) {
 	resetTables(t)
 	sellerID, buyerID := seedTwoUsers(t)
 	repo := invoice.NewInvoiceRepo(testDB)
 	ctx := context.Background()
 
 	inv := newInvoice("inv_idem", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	var chainBefore int64
 	require.NoError(t, testDB.Table("chain_invoices").
 		Where("key = ?", inv.InvoiceId).Count(&chainBefore).Error)
 
-	// Second Save with same id: PII insert is a no-op (OnConflict DoNothing),
-	// but the chain entries are appended unconditionally, so chain count grows.
-	require.NoError(t, repo.Save(ctx, inv))
+	// Second SaveAll with unchanged data: PII conflict triggers DO UPDATE
+	// (touches updated_at) but every chain field is unchanged, so the
+	// skip-if-unchanged guard means no new chain rows are appended.
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	var chainAfter int64
 	require.NoError(t, testDB.Table("chain_invoices").
 		Where("key = ?", inv.InvoiceId).Count(&chainAfter).Error)
-	require.Equal(t, chainBefore*2, chainAfter,
-		"each Save appends a new chain version of every chain-stored field")
+	require.Equal(t, chainBefore, chainAfter,
+		"unchanged SaveAll must not append new chain versions")
 
 	// Fetch still works and returns the same logical values.
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
@@ -240,7 +245,7 @@ func TestInvoice_AuditFields_Populated(t *testing.T) {
 
 	before := time.Now().UTC().Add(-time.Second)
 	inv := newInvoice("inv_audit", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -258,7 +263,7 @@ func TestInvoice_SoftDelete_HidesFromFetch(t *testing.T) {
 	ctx := context.Background()
 
 	inv := newInvoice("inv_soft_delete", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	require.NoError(t, testDB.Exec(
 		`UPDATE pii_invoices SET deleted_at = NOW() WHERE invoice_id = ?`, inv.InvoiceId,
@@ -288,7 +293,7 @@ func TestInvoice_RepeatedField_RoundTrip(t *testing.T) {
 
 	inv := newInvoice("inv_tags", sellerID, buyerID)
 	inv.Tags = []string{"urgent", "paid", "Q4"}
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -303,7 +308,7 @@ func TestInvoice_RepeatedField_SingleElement(t *testing.T) {
 
 	inv := newInvoice("inv_tags_one", sellerID, buyerID)
 	inv.Tags = []string{"solo"}
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -318,7 +323,7 @@ func TestInvoice_RepeatedField_Empty(t *testing.T) {
 
 	inv := newInvoice("inv_tags_empty", sellerID, buyerID)
 	inv.Tags = []string{}
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -342,7 +347,7 @@ func TestInvoice_RepeatedField_Nil(t *testing.T) {
 	// — same wire format as an empty slice — so Fetch returns an empty array.
 	inv := newInvoice("inv_tags_nil", sellerID, buyerID)
 	require.Nil(t, inv.Tags)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -357,7 +362,7 @@ func TestInvoice_RepeatedField_ChainStorage(t *testing.T) {
 
 	inv := newInvoice("inv_tags_chain", sellerID, buyerID)
 	inv.Tags = []string{"a", "b", "c"}
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	// pgArrayLiteral emits "{a,b,c}" — the Postgres array text literal.
 	// Asserted directly against chain_invoices so any change to that helper
@@ -371,8 +376,8 @@ func TestInvoice_RepeatedField_ChainStorage(t *testing.T) {
 
 // ── Repeated MessageType (chain-stored JSON array) support ───────────────────
 // These exercise the `repeated Money items = 10` field added to invoice.proto.
-// View column is datatypes.JSON (raw JSON-array bytes); chain rows store the
-// same bytes pre-marshaled element-wise via protojson, then string-joined.
+// View column is []*Money via the protojsonArray serializer (chain TEXT cast
+// to ::jsonb in the view, decoded back to typed pointers on Scan).
 
 func TestInvoice_RepeatedMessage_RoundTrip(t *testing.T) {
 	resetTables(t)
@@ -385,14 +390,15 @@ func TestInvoice_RepeatedMessage_RoundTrip(t *testing.T) {
 		{Value: 100, Unit: "USD"},
 		{Value: 50, Unit: "INR"},
 	}
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
-	require.NotEmpty(t, view.Items)
-	// protojson renders int64 as string. Compare semantically.
-	expected := `[{"value":"100","unit":"USD"},{"value":"50","unit":"INR"}]`
-	require.JSONEq(t, expected, string(view.Items))
+	require.Len(t, view.Items, 2)
+	require.Equal(t, int64(100), view.Items[0].Value)
+	require.Equal(t, "USD", view.Items[0].Unit)
+	require.Equal(t, int64(50), view.Items[1].Value)
+	require.Equal(t, "INR", view.Items[1].Unit)
 }
 
 func TestInvoice_RepeatedMessage_Empty(t *testing.T) {
@@ -406,12 +412,11 @@ func TestInvoice_RepeatedMessage_Empty(t *testing.T) {
 	// valid JSON array and the view's ::jsonb cast succeeds.
 	inv := newInvoice("inv_items_empty", sellerID, buyerID)
 	require.Nil(t, inv.Items)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
-	require.JSONEq(t, "[]", string(view.Items),
-		"empty Items must round-trip as the JSON empty array")
+	require.Empty(t, view.Items, "empty Items must round-trip as a nil/empty slice")
 }
 
 func TestInvoice_RepeatedMessage_ChainStorage(t *testing.T) {
@@ -425,7 +430,7 @@ func TestInvoice_RepeatedMessage_ChainStorage(t *testing.T) {
 		{Value: 1, Unit: "EUR"},
 		{Value: 2, Unit: "GBP"},
 	}
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	// Chain row stores the JSON array literal verbatim — confirms the
 	// element-wise protojson.Marshal + strings.Join path in
@@ -457,7 +462,7 @@ func TestInvoice_Timestamp_RoundTrip(t *testing.T) {
 	expected := time.Date(2026, time.March, 15, 14, 30, 45, 123456000, time.UTC)
 	inv := newInvoice("inv_ts", sellerID, buyerID)
 	inv.TransferDate = timestamppb.New(expected)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)
@@ -479,7 +484,7 @@ func TestInvoice_Timestamp_ColumnIsTimestampTZ(t *testing.T) {
 
 	inv := newInvoice("inv_ts_col", sellerID, buyerID)
 	inv.TransferDate = timestamppb.New(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	// The view exposes the column as timestamptz.
 	var viewType string

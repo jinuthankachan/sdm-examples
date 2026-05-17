@@ -18,48 +18,49 @@ func main() {
 	if err != nil {
 		panic("Failed to connect to database")
 	}
-	userRepo := user.NewUserRepo(db)
 
-	// 2. Initialize Repo
+	// 2. Migrate Schema — apply every *_sdm_schema.sql under models/sql.
+	// Re-running is safe (CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE).
+	if err := applySchemas(db, "models/sql"); err != nil {
+		panic(fmt.Errorf("apply schemas: %w", err))
+	}
+
+	// 3. Initialize Repo
+	userRepo := user.NewUserRepo(db)
 	repo := invoice.NewInvoiceRepo(db)
 
-	// 3. Migrate Schema
-	// In a real app, you would run the generated SQL.
-	// For this demo, we can just AutoMigrate the underlying tables if the generated code exports them,
-	// OR we can execute the generated SQL.
-	// Since generated code splits structs, we'll just use AutoMigrate on the internal structs if likely visible,
-	// or more simply, just print that we are ready.
-	// NOTE: The generated code creates `PiiUser` and `ChainUser`.
-	// Let's assume for this demo we just rely on the fact that it compiles.
-	// To actually run it, we need the tables.
-	// Let's try to AutoMigrate the internal models if we can access them, or just skip execution logic
-	// if access is restricted. For now, let's just attempt to compile a save call.
-
-	// We will just verify compilation and basic repo creation for now.
 	ctx := context.Background()
-	_ = ctx
-
+	ctx = invoice.WithActor(ctx, "tester_1")
 	u1 := &user.User{
-		UserId:  "user_1",
-		Email:   "john@doe.com",
+		UserId:  "user_3",
+		Email:   "joh1n@doe.com",
 		Name:    "John Doe",
 		Pan:     "123456789",
 		Country: "US",
 	}
-	userRepo.Save(ctx, u1)
+	if err := userRepo.Save(ctx, u1); err != nil {
+		panic(fmt.Errorf("save user_1: %w", err))
+	}
+	if err := userRepo.CommitChain(ctx, u1.UserId, ""); err != nil {
+		panic(fmt.Errorf("commit chain: %w", err))
+	}
 
 	u2 := &user.User{
-		UserId:  "user_2",
-		Email:   "jane@doe.com",
+		UserId:  "user_4",
+		Email:   "jan1e@doe.com",
 		Name:    "Jane Doe",
-		Pan:     "123456789",
+		Pan:     "987654321",
 		Country: "US",
 	}
-	userRepo.Save(ctx, u2)
+	if err := userRepo.Save(ctx, u2); err != nil {
+		panic(fmt.Errorf("save user_2: %w", err))
+	}
+	if err := userRepo.CommitChain(ctx, u2.UserId, ""); err != nil {
+		panic(fmt.Errorf("commit chain: %w", err))
+	}
 
-	// Attempt a Save (this will fail at runtime if tables don't exist, but proves compilation)
 	i := &invoice.Invoice{
-		InvoiceId: "inv_1",
+		InvoiceId: "inv_2",
 		SellerId:  u1.UserId,
 		BuyerId:   u2.UserId,
 		Amount:    100,
@@ -68,14 +69,29 @@ func main() {
 			Unit:  "INR",
 		},
 	}
-	fmt.Printf("Created Invoice object: %+v\n", i)
-	fmt.Printf("Repo initialized: %+v\n", repo)
-
-	// Uncomment to test runtime if tables existed
-	err = repo.Save(ctx, i)
-	if err != nil {
-		panic(fmt.Errorf("failed to save invoice: %s", err.Error()))
+	if err := repo.Save(ctx, i); err != nil {
+		panic(fmt.Errorf("save invoice: %w", err))
+	}
+	if err := repo.CommitChain(ctx, i.InvoiceId, ""); err != nil {
+		panic(fmt.Errorf("commit chain: %w", err))
 	}
 
-	fmt.Println("Successfully compiled and initialized SDM example!")
+	// Mutate + SaveAll → upserts the PII row and appends a new chain version
+	// for the changed field (amount). Price is unchanged, so skip-if-unchanged
+	// keeps it at the original version.
+	i.Amount = 200
+	if err := repo.Update(ctx, i); err != nil {
+		panic(fmt.Errorf("save invoice: %w", err))
+	}
+	if err := repo.CommitChain(ctx, i.InvoiceId, ""); err != nil {
+		panic(fmt.Errorf("commit chain: %w", err))
+	}
+
+	changeLog, err := repo.ChangeLog(ctx, i.InvoiceId)
+	if err != nil {
+		panic(fmt.Errorf("change log: %w", err))
+	}
+	fmt.Printf("amount history: %+v\n", changeLog["amount"])
+
+	fmt.Println("Successfully ran SDM demo!")
 }

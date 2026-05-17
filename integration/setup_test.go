@@ -1,3 +1,9 @@
+// setup_test.go contains mode-agnostic test scaffolding (TestMain, schema
+// loading) that compiles in any config. mode-specific helpers — most
+// notably mustSaveUser, which uses methods that differ across configs —
+// live in setup_off_test.go (!chaindrafts) and setup_chaindrafts_test.go
+// (chaindrafts).
+
 package integration
 
 import (
@@ -14,8 +20,6 @@ import (
 	gormpg "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-
-	"demo/models/user"
 )
 
 var testDB *gorm.DB
@@ -73,23 +77,13 @@ func applySchemaFile(db *gorm.DB, relPath string) error {
 	return db.Exec(string(b)).Error
 }
 
-// resetTables clears every SDM table between tests. RESTART IDENTITY resets
-// BIGSERIAL counters so auto_increment assertions are deterministic.
-func resetTables(t *testing.T) {
-	t.Helper()
-	err := testDB.Exec(
-		`TRUNCATE TABLE pii_invoices, chain_invoices, pii_users, chain_users RESTART IDENTITY CASCADE`,
-	).Error
-	if err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-}
-
-// mustSaveUser inserts a user and t.Fatals on error. Used to seed FK
-// dependencies for invoice tests.
-func mustSaveUser(t *testing.T, u *user.User) {
-	t.Helper()
-	if err := user.NewUserRepo(testDB).Save(context.Background(), u); err != nil {
-		t.Fatalf("seed user %s: %v", u.UserId, err)
-	}
-}
+// resetTables is defined in two build-tagged files:
+//   - setup_audit_test.go   (default; tag: !noaudit) — truncates audit tables too
+//   - setup_noaudit_test.go (tag: noaudit)           — base tables only
+// Switching depends on whether the demo was generated with
+// create-audit-tables: true (default) or false. Run with `-tags noaudit`
+// against an audit-off generation.
+//
+// mustSaveUser is also split by tag:
+//   - setup_off_test.go        (tag: !chaindrafts) — uses SaveAll
+//   - setup_chaindrafts_test.go (tag: chaindrafts) — uses Upsert+CommitChain

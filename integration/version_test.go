@@ -1,3 +1,7 @@
+//go:build !chaindrafts
+
+// OFF-mode version trigger tests; not compiled when -tags chaindrafts is set.
+
 package integration
 
 import (
@@ -37,13 +41,13 @@ func TestVersion_SameKeyField_Increments(t *testing.T) {
 
 	inv := newInvoice("ver_same", sellerID, buyerID)
 	inv.Amount = 100
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	inv.Amount = 200
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	inv.Amount = 300
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	rows := loadChainVersions(t, inv.InvoiceId, "amount")
 	require.Len(t, rows, 3)
@@ -62,7 +66,7 @@ func TestVersion_DifferentFields_StartAtOne(t *testing.T) {
 	ctx := context.Background()
 
 	inv := newInvoice("ver_first", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	// Every chain row for a brand-new record should be at version=1, regardless
 	// of how many distinct field_names there are.
@@ -84,8 +88,8 @@ func TestVersion_AcrossKeys_Independent(t *testing.T) {
 
 	a := newInvoice("ver_a", sellerID, buyerID)
 	b := newInvoice("ver_b", sellerID, buyerID)
-	require.NoError(t, repo.Save(ctx, a))
-	require.NoError(t, repo.Save(ctx, b))
+	require.NoError(t, repo.SaveAll(ctx, a, true))
+	require.NoError(t, repo.SaveAll(ctx, b, true))
 
 	// Each invoice's "amount" chain row should be at version=1; the trigger
 	// scopes MAX(version)+1 by (key, field_name), so the two keys are
@@ -106,11 +110,11 @@ func TestVersion_FetchReturnsLatest(t *testing.T) {
 
 	inv := newInvoice("ver_latest", sellerID, buyerID)
 	inv.Amount = 1
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 	inv.Amount = 2
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 	inv.Amount = 42
-	require.NoError(t, repo.Save(ctx, inv))
+	require.NoError(t, repo.SaveAll(ctx, inv, true))
 
 	view, err := repo.Fetch(ctx, inv.InvoiceId)
 	require.NoError(t, err)

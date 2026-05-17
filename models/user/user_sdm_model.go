@@ -4,6 +4,7 @@ package user
 
 import (
 	"time"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -15,6 +16,7 @@ type UserPii struct {
 	CreatedAt time.Time      `gorm:"column:created_at"`
 	UpdatedAt time.Time      `gorm:"column:updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"column:deleted_at"`
+	CreatedBy string         `gorm:"column:created_by"`
 }
 
 type UserChain struct {
@@ -24,25 +26,40 @@ type UserChain struct {
 	TxHash     string    `gorm:"column:tx_hash"`
 	FieldValue string    `gorm:"column:field_value"`
 	CreatedAt  time.Time `gorm:"column:created_at"`
+	CreatedBy  string    `gorm:"column:created_by"`
+	Status     string    `gorm:"column:status"`
 }
 
 type UserView struct {
-	Id          int64          `gorm:"column:id"`
-	UserId      string         `gorm:"column:user_id"`
-	Email       string         `gorm:"column:email"`
-	HashedEmail string         `gorm:"column:hashed_email"`
-	Name        string         `gorm:"column:name"`
-	Pan         string         `gorm:"column:pan"`
-	Country     string         `gorm:"column:country"`
-	CreatedAt   time.Time      `gorm:"column:created_at"`
-	UpdatedAt   time.Time      `gorm:"column:updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"column:deleted_at"`
-	TxHash      string         `gorm:"column:tx_hash"`
+	Id               int64          `gorm:"column:id"`
+	UserId           string         `gorm:"column:user_id"`
+	Email            string         `gorm:"column:email"`
+	HashedEmail      string         `gorm:"column:hashed_email"`
+	Name             string         `gorm:"column:name"`
+	Pan              string         `gorm:"column:pan"`
+	Country          string         `gorm:"column:country"`
+	CreatedAt        time.Time      `gorm:"column:created_at"`
+	UpdatedAt        time.Time      `gorm:"column:updated_at"`
+	DeletedAt        gorm.DeletedAt `gorm:"column:deleted_at"`
+	CreatedBy        string         `gorm:"column:created_by"`
+	TxHash           string         `gorm:"column:tx_hash"`
+	HasPendingDrafts bool           `gorm:"column:has_pending_drafts"`
 }
 
 func (UserPii) TableName() string   { return "pii_users" }
 func (UserChain) TableName() string { return "chain_users" }
 func (UserView) TableName() string  { return "users" }
+
+type UserPiiAudit struct {
+	Id         int64          `gorm:"column:id;primaryKey;autoIncrement"`
+	RefId      string         `gorm:"column:ref_id"`
+	LastValue  datatypes.JSON `gorm:"column:last_value;type:jsonb"`
+	ChangeType string         `gorm:"column:change_type"`
+	ChangedBy  string         `gorm:"column:changed_by"`
+	ChangedAt  time.Time      `gorm:"column:changed_at"`
+}
+
+func (UserPiiAudit) TableName() string { return "audit_pii_users" }
 
 func (c *UserChain) EnsureUnique(tx *gorm.DB) bool {
 	var count int64
@@ -51,4 +68,15 @@ func (c *UserChain) EnsureUnique(tx *gorm.DB) bool {
 		return false
 	}
 	return count == 0
+}
+
+func (v *UserView) AsBaseModel() *User {
+	base := &User{}
+	base.Id = v.Id
+	base.UserId = v.UserId
+	base.Email = v.Email
+	base.Name = v.Name
+	base.Pan = v.Pan
+	base.Country = v.Country
+	return base
 }

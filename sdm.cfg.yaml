@@ -17,3 +17,11 @@ output: "models/"
 
 # Directory where to write the sql files
 output-sql: "models/sql/"
+
+# Enable audit table creation
+create-audit-tables: true
+
+# Chain draft/commit workflow (opt-in). When true the generator swaps
+# SaveAll for Upsert/Update + DraftChain/CommitChain/DropChain and Fetch
+# takes a 'drafted bool' parameter. See README for details. Default false.
+chain-drafts: true

@@ -1,3 +1,7 @@
+//go:build !chaindrafts
+
+// OFF-mode user tests; not compiled when -tags chaindrafts is in effect.
+
 package integration
 
 import (
@@ -25,13 +29,14 @@ func newUser(userID string) *user.User {
 	}
 }
 
-func TestUser_Save_RoundTrip(t *testing.T) {
+func TestUser_SaveAll_RoundTrip(t *testing.T) {
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
 
 	u := newUser("u1")
-	require.NoError(t, repo.Save(ctx, u))
+	// Pan + Country live in the chain; view fields are NULL without withChain.
+	require.NoError(t, repo.SaveAll(ctx, u, true))
 	require.NotZero(t, u.Id, "auto_increment should populate Id")
 
 	view, err := repo.Fetch(ctx, u.Id)
@@ -44,37 +49,28 @@ func TestUser_Save_RoundTrip(t *testing.T) {
 	require.Equal(t, u.Country, view.Country)
 }
 
-func TestUser_SavePii_Only(t *testing.T) {
+func TestUser_Save_PiiOnly(t *testing.T) {
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
 
 	u := newUser("u_pii_only")
-	require.NoError(t, repo.SavePii(ctx, u))
+	// New Save is a strict INSERT against pii_users only — chain is untouched.
+	require.NoError(t, repo.Save(ctx, u))
 
 	var piiCount, chainCount int64
 	require.NoError(t, testDB.Table("pii_users").Count(&piiCount).Error)
 	require.NoError(t, testDB.Table("chain_users").Count(&chainCount).Error)
 	require.Equal(t, int64(1), piiCount)
-	require.Equal(t, int64(0), chainCount, "SavePii must not touch chain table")
+	require.Equal(t, int64(0), chainCount, "Save must not touch chain table")
 }
 
-func TestUser_SaveChain_Only(t *testing.T) {
-	resetTables(t)
-	repo := user.NewUserRepo(testDB)
-	ctx := context.Background()
-
-	u := newUser("u_chain_only")
-	require.NoError(t, repo.SaveChain(ctx, u))
-
-	var piiCount, chainCount int64
-	require.NoError(t, testDB.Table("pii_users").Count(&piiCount).Error)
-	require.NoError(t, testDB.Table("chain_users").Count(&chainCount).Error)
-	require.Equal(t, int64(0), piiCount, "SaveChain must not touch PII table")
-	// chain_users gets one row per non-PK, non-PII field plus one row per hashed
-	// field: hashed_email, pan, country → 3 rows for user.
-	require.Equal(t, int64(3), chainCount)
-}
+// TestUser_SaveChain_Only — removed. The "chain-only write on a PII-backed
+// message" capability was retired when chain-drafts became opt-in (and the
+// generator stopped emitting SaveChain). The atomic alternative is
+// SaveAll(ctx, m, true), which writes both PII and chain in a transaction.
+// Pure chain-only ingestion remains supported on chain-only messages
+// (those with no PII fields), where SaveAll's PII step is a no-op.
 
 func TestUser_AutoIncrement_IdAssigned(t *testing.T) {
 	resetTables(t)
@@ -95,7 +91,7 @@ func TestUser_ChainIdentifierKey_IsUserId(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("chain_key_test")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.SaveAll(ctx, u, true))
 
 	// chain_users.key should be the user_id (chain_identifier_key), not the
 	// numeric BIGSERIAL id. This keeps the chain key stable across deployments
@@ -114,7 +110,7 @@ func TestUser_HashedEmail_Stored(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("hash_test")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.SaveAll(ctx, u, true))
 
 	sum := sha256.Sum256([]byte(u.Email))
 	expected := hex.EncodeToString(sum[:])
@@ -132,7 +128,7 @@ func TestUser_HashedEmail_Stored(t *testing.T) {
 	require.Equal(t, expected, view.HashedEmail)
 }
 
-func TestUser_UniqueEmail_Violation_SavePii(t *testing.T) {
+func TestUser_Save_UniqueEmailViolation(t *testing.T) {
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
@@ -141,41 +137,42 @@ func TestUser_UniqueEmail_Violation_SavePii(t *testing.T) {
 	u2 := newUser("dup_b")
 	u2.Email = u1.Email // force conflict on the UNIQUE constraint
 
-	// SavePii does not use ON CONFLICT, so a UNIQUE collision propagates as an error.
-	require.NoError(t, repo.SavePii(ctx, u1))
-	err := repo.SavePii(ctx, u2)
-	require.Error(t, err, "SavePii with duplicate email should violate UNIQUE")
+	// Save is a strict INSERT; a UNIQUE collision propagates as an error.
+	require.NoError(t, repo.Save(ctx, u1))
+	err := repo.Save(ctx, u2)
+	require.Error(t, err, "Save with duplicate email should violate UNIQUE")
 	lower := strings.ToLower(err.Error())
 	require.True(t,
 		strings.Contains(lower, "duplicate") || strings.Contains(lower, "unique"),
 		"unexpected error: %v", err)
 }
 
-func TestUser_Save_IdempotentOnDuplicateEmail(t *testing.T) {
+func TestUser_SaveAll_OverwritesOnConflict(t *testing.T) {
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
 
-	u1 := newUser("save_dup_a")
-	u2 := newUser("save_dup_b")
-	u2.Email = u1.Email // would violate UNIQUE on a raw insert
+	u1 := newUser("save_all_dup")
+	require.NoError(t, repo.SaveAll(ctx, u1, true))
 
-	// Save wraps the PII insert in ON CONFLICT DO NOTHING. PG applies that to
-	// any unique constraint violation, so the second Save is a silent no-op
-	// for the PII row. Chain rows, however, are still appended.
-	require.NoError(t, repo.Save(ctx, u1))
-	require.NoError(t, repo.Save(ctx, u2),
-		"Save must absorb the unique-constraint conflict via OnConflict DoNothing")
+	// Second SaveAll with the same user_id (the conflict target) but different
+	// mutable columns — ON CONFLICT DO UPDATE overwrites the existing row.
+	u2 := newUser("save_all_dup")
+	u2.Email = "renamed@example.com"
+	u2.Name = "Renamed"
+	require.NoError(t, repo.SaveAll(ctx, u2, true),
+		"SaveAll must absorb the conflict via OnConflict DO UPDATE")
 
-	// pii_users should still have one row — the first save wins.
+	// Still exactly one PII row; the conflict updated rather than inserted.
 	var piiCount int64
 	require.NoError(t, testDB.Table("pii_users").Count(&piiCount).Error)
 	require.Equal(t, int64(1), piiCount)
 
-	// View should reflect u1, not u2.
-	view, err := repo.FetchByEmail(ctx, u1.Email)
+	// The mutable columns now reflect u2.
+	view, err := repo.FetchByUserId(ctx, u1.UserId)
 	require.NoError(t, err)
-	require.Equal(t, u1.UserId, view.UserId)
+	require.Equal(t, "renamed@example.com", view.Email)
+	require.Equal(t, "Renamed", view.Name)
 }
 
 func TestUser_FetchByEmail_RoundTrip(t *testing.T) {
@@ -198,7 +195,8 @@ func TestUser_FetchByPan_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("by_pan")
-	require.NoError(t, repo.Save(ctx, u))
+	// pan is chain-only; view's pan column requires withChain=true.
+	require.NoError(t, repo.SaveAll(ctx, u, true))
 
 	// pan is unique + chain-only. The view sources pan from the chain table,
 	// so FetchByPan should still return the latest value.

@@ -6,7 +6,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -19,122 +21,448 @@ func NewUserRepo(db *gorm.DB) *UserRepo {
 	return &UserRepo{db: db}
 }
 
-func (r *UserRepo) SavePii(ctx context.Context, model *User) error {
+func (r *UserRepo) Save(ctx context.Context, model *User) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
 		pii := UserPii{
-			UserId: model.UserId,
-			Email:  model.Email,
-			Name:   model.Name,
+			UserId:    model.UserId,
+			Email:     model.Email,
+			Name:      model.Name,
+			CreatedBy: _actor,
 		}
 		if err := tx.Create(&pii).Error; err != nil {
 			return err
 		}
 		model.Id = pii.Id // copy DB-generated value back to model
-		return nil
-	})
-}
-
-func (r *UserRepo) SaveChain(ctx context.Context, model *User) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Save Chain Fields
+		// chain-drafts: stage chain fields as DRAFTED in the same transaction
 		compositeKey := fmt.Sprintf("%v", model.UserId)
-		// Hash Email
-		h_Email := sha256.Sum256([]byte(fmt.Sprintf("%v", model.Email)))
-		hashed_Email := hex.EncodeToString(h_Email[:])
-		if err := tx.Create(&UserChain{
-			Key:        compositeKey,
-			FieldName:  "hashed_email",
-			FieldValue: hashed_Email,
-		}).Error; err != nil {
+		var _latestRows []struct {
+			FieldName  string
+			FieldValue string
+		}
+		if err := tx.Raw("SELECT DISTINCT ON (field_name) field_name, field_value FROM chain_users WHERE key = ? AND status = 'CREATED' ORDER BY field_name, version DESC", compositeKey).Scan(&_latestRows).Error; err != nil {
 			return err
 		}
-		if err := tx.Create(&UserChain{
-			Key:        compositeKey,
-			FieldName:  "pan",
-			FieldValue: fmt.Sprintf("%v", model.Pan),
-		}).Error; err != nil {
-			return err
+		_latest := make(map[string]string, len(_latestRows))
+		for _, _r := range _latestRows {
+			_latest[_r.FieldName] = _r.FieldValue
 		}
-		if err := tx.Create(&UserChain{
-			Key:        compositeKey,
-			FieldName:  "country",
-			FieldValue: fmt.Sprintf("%v", model.Country),
-		}).Error; err != nil {
-			return err
+		{
+			// Hash Email
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.Email)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_email"]; !_ok || _prev != _hv {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_email",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Pan)
+			if _prev, _ok := _latest["pan"]; !_ok || _prev != _v {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "pan",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Country)
+			if _prev, _ok := _latest["country"]; !_ok || _prev != _v {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "country",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
 		return nil
 	})
 }
 
-func (r *UserRepo) Save(ctx context.Context, model *User) error {
+func (r *UserRepo) Upsert(ctx context.Context, model *User) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		pii := UserPii{
-			UserId: model.UserId,
-			Email:  model.Email,
-			Name:   model.Name,
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
 		}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&pii).Error; err != nil {
+		pii := UserPii{
+			UserId:    model.UserId,
+			Email:     model.Email,
+			Name:      model.Name,
+			CreatedBy: _actor,
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"email", "name", "updated_at"}),
+		}).Create(&pii).Error; err != nil {
 			return err
 		}
 		model.Id = pii.Id // copy DB-generated value back to model
-
-		// Save Chain Fields
+		// chain-drafts: stage chain fields as DRAFTED in the same transaction
 		compositeKey := fmt.Sprintf("%v", model.UserId)
-		// Hash Email
-		h_Email := sha256.Sum256([]byte(fmt.Sprintf("%v", model.Email)))
-		hashed_Email := hex.EncodeToString(h_Email[:])
-		if err := tx.Create(&UserChain{
-			Key:        compositeKey,
-			FieldName:  "hashed_email",
-			FieldValue: hashed_Email,
-		}).Error; err != nil {
+		var _latestRows []struct {
+			FieldName  string
+			FieldValue string
+		}
+		if err := tx.Raw("SELECT DISTINCT ON (field_name) field_name, field_value FROM chain_users WHERE key = ? AND status = 'CREATED' ORDER BY field_name, version DESC", compositeKey).Scan(&_latestRows).Error; err != nil {
 			return err
 		}
-		if err := tx.Create(&UserChain{
-			Key:        compositeKey,
-			FieldName:  "pan",
-			FieldValue: fmt.Sprintf("%v", model.Pan),
-		}).Error; err != nil {
-			return err
+		_latest := make(map[string]string, len(_latestRows))
+		for _, _r := range _latestRows {
+			_latest[_r.FieldName] = _r.FieldValue
 		}
-		if err := tx.Create(&UserChain{
-			Key:        compositeKey,
-			FieldName:  "country",
-			FieldValue: fmt.Sprintf("%v", model.Country),
-		}).Error; err != nil {
-			return err
+		{
+			// Hash Email
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.Email)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_email"]; !_ok || _prev != _hv {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_email",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Pan)
+			if _prev, _ok := _latest["pan"]; !_ok || _prev != _v {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "pan",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Country)
+			if _prev, _ok := _latest["country"]; !_ok || _prev != _v {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "country",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
 		}
 		return nil
 	})
 }
 
-func (r *UserRepo) Fetch(ctx context.Context, id int64) (*UserView, error) {
+func (r *UserRepo) Update(ctx context.Context, model *User) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
+		pii := UserPii{
+			UserId:    model.UserId,
+			Email:     model.Email,
+			Name:      model.Name,
+			CreatedBy: _actor,
+		}
+		_result := tx.Model(&UserPii{}).
+			Where("user_id = ?", model.UserId).
+			Select([]string{"email", "name", "updated_at"}).
+			Updates(pii)
+		if _result.Error != nil {
+			return _result.Error
+		}
+		if _result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		// chain-drafts: stage chain fields as DRAFTED in the same transaction
+		compositeKey := fmt.Sprintf("%v", model.UserId)
+		var _latestRows []struct {
+			FieldName  string
+			FieldValue string
+		}
+		if err := tx.Raw("SELECT DISTINCT ON (field_name) field_name, field_value FROM chain_users WHERE key = ? AND status = 'CREATED' ORDER BY field_name, version DESC", compositeKey).Scan(&_latestRows).Error; err != nil {
+			return err
+		}
+		_latest := make(map[string]string, len(_latestRows))
+		for _, _r := range _latestRows {
+			_latest[_r.FieldName] = _r.FieldValue
+		}
+		{
+			// Hash Email
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.Email)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_email"]; !_ok || _prev != _hv {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_email",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Pan)
+			if _prev, _ok := _latest["pan"]; !_ok || _prev != _v {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "pan",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Country)
+			if _prev, _ok := _latest["country"]; !_ok || _prev != _v {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "country",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func (r *UserRepo) DraftChain(ctx context.Context, model *User) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		compositeKey := fmt.Sprintf("%v", model.UserId)
+		var _latestRows []struct {
+			FieldName  string
+			FieldValue string
+		}
+		if err := tx.Raw("SELECT DISTINCT ON (field_name) field_name, field_value FROM chain_users WHERE key = ? AND status = 'CREATED' ORDER BY field_name, version DESC", compositeKey).Scan(&_latestRows).Error; err != nil {
+			return err
+		}
+		_latest := make(map[string]string, len(_latestRows))
+		for _, _r := range _latestRows {
+			_latest[_r.FieldName] = _r.FieldValue
+		}
+		{
+			// Hash Email
+			_h := sha256.Sum256([]byte(fmt.Sprintf("%v", model.Email)))
+			_hv := hex.EncodeToString(_h[:])
+			if _prev, _ok := _latest["hashed_email"]; !_ok || _prev != _hv {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "hashed_email",
+					FieldValue: _hv,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Pan)
+			if _prev, _ok := _latest["pan"]; !_ok || _prev != _v {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "pan",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		{
+			_v := fmt.Sprintf("%v", model.Country)
+			if _prev, _ok := _latest["country"]; !_ok || _prev != _v {
+				_row := UserChain{
+					Key:        compositeKey,
+					FieldName:  "country",
+					FieldValue: _v,
+					CreatedBy:  _actor,
+					Status:     "DRAFTED",
+				}
+				if err := tx.Create(&_row).Error; err != nil {
+					var _pg *pgconn.PgError
+					if errors.As(err, &_pg) && _pg.Code == "23505" {
+						return ErrPendingDraftExists
+					}
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func (r *UserRepo) CommitChain(ctx context.Context, userId string, txHash string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
+		_key := fmt.Sprintf("%v", userId)
+		return tx.Model(&UserChain{}).
+			Where("key = ? AND status = ?", _key, "DRAFTED").
+			Updates(map[string]interface{}{"status": "CREATED", "tx_hash": txHash}).Error
+	})
+}
+
+func (r *UserRepo) DropChain(ctx context.Context, userId string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_actor := actorFromContext(ctx)
+		if _actor != "" {
+			if err := tx.Exec("SELECT set_config('sdm.actor', ?, true)", _actor).Error; err != nil {
+				return err
+			}
+		}
+		_key := fmt.Sprintf("%v", userId)
+		return tx.Model(&UserChain{}).
+			Where("key = ? AND status = ?", _key, "DRAFTED").
+			Update("status", "DROPPED").Error
+	})
+}
+
+func (r *UserRepo) Fetch(ctx context.Context, id int64, drafted bool) (*UserView, error) {
 	var view UserView
-	if err := r.db.WithContext(ctx).Where("id = ?", id).Where("deleted_at IS NULL").First(&view).Error; err != nil {
+	_table := "users"
+	if drafted {
+		_table = "users_with_drafts"
+	}
+	if err := r.db.WithContext(ctx).Table(_table).Where("id = ?", id).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
 }
 
-func (r *UserRepo) FetchByUserId(ctx context.Context, userId string) (*UserView, error) {
+func (r *UserRepo) FetchByUserId(ctx context.Context, userId string, drafted bool) (*UserView, error) {
 	var view UserView
-	if err := r.db.WithContext(ctx).Where("user_id = ?", userId).Where("deleted_at IS NULL").First(&view).Error; err != nil {
+	_table := "users"
+	if drafted {
+		_table = "users_with_drafts"
+	}
+	if err := r.db.WithContext(ctx).Table(_table).Where("user_id = ?", userId).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
 }
 
-func (r *UserRepo) FetchByEmail(ctx context.Context, email string) (*UserView, error) {
+func (r *UserRepo) FetchByEmail(ctx context.Context, email string, drafted bool) (*UserView, error) {
 	var view UserView
-	if err := r.db.WithContext(ctx).Where("email = ?", email).Where("deleted_at IS NULL").First(&view).Error; err != nil {
+	_table := "users"
+	if drafted {
+		_table = "users_with_drafts"
+	}
+	if err := r.db.WithContext(ctx).Table(_table).Where("email = ?", email).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
 }
 
-func (r *UserRepo) FetchByPan(ctx context.Context, pan string) (*UserView, error) {
+func (r *UserRepo) FetchByPan(ctx context.Context, pan string, drafted bool) (*UserView, error) {
 	var view UserView
-	if err := r.db.WithContext(ctx).Where("pan = ?", pan).Where("deleted_at IS NULL").First(&view).Error; err != nil {
+	_table := "users"
+	if drafted {
+		_table = "users_with_drafts"
+	}
+	if err := r.db.WithContext(ctx).Table(_table).Where("pan = ?", pan).Where("deleted_at IS NULL").First(&view).Error; err != nil {
 		return nil, err
 	}
 	return &view, nil
@@ -170,4 +498,39 @@ func (r *UserRepo) ExistsByPan(ctx context.Context, pan string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (r *UserRepo) AuditLog(ctx context.Context, id int64) ([]UserPiiAudit, error) {
+	var rows []UserPiiAudit
+	if err := r.db.WithContext(ctx).
+		Where("ref_id = ?", fmt.Sprintf("%v", id)).
+		Order("changed_at ASC, id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *UserRepo) ChangeLog(ctx context.Context, userId string) (ChangeLog, error) {
+	var rows []UserChain
+	if err := r.db.WithContext(ctx).
+		Where("key = ?", fmt.Sprintf("%v", userId)).
+		Order("field_name, version").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	log := make(ChangeLog)
+	for _, row := range rows {
+		if _, ok := log[row.FieldName]; !ok {
+			log[row.FieldName] = make(map[int64]ChangeLogEntry)
+		}
+		log[row.FieldName][row.Version] = ChangeLogEntry{
+			Value:     row.FieldValue,
+			Timestamp: row.CreatedAt,
+		}
+	}
+	return log, nil
 }

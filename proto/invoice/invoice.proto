@@ -18,6 +18,8 @@ message Invoice {
   Money price = 8 [(sdm.pii) = true, (sdm.json) = true];
   repeated string tags = 9;
   repeated Money items = 10;
+  repeated string pii_tags = 11 [(sdm.pii) = true];
+  repeated Money pii_items = 12 [(sdm.pii) = true];
   google.protobuf.Timestamp transfer_date = 13;
 }
 

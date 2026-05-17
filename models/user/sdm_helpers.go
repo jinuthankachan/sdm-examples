@@ -3,8 +3,11 @@
 package user
 
 import (
-	"strings"
+	"encoding/json"
 	"context"
+	"errors"
+	"strings"
+	"time"
 	"fmt"
 	"reflect"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -19,6 +22,55 @@ import (
 func pgArrayLiteral(vals []string) string {
 	return "{" + strings.Join(vals, ",") + "}"
 }
+
+// ChangeLogEntry is a single (version → value, timestamp) row in a ChangeLog.
+// Value is the raw chain field_value (TEXT). Numeric / JSON / array fields
+// are returned as their stored string form — callers cast as needed.
+type ChangeLogEntry struct {
+	Value     string    `json:"value"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// ChangeLog maps field_name → version → entry. Versions are 1-based and
+// monotonically increasing per (key, field_name), assigned by the chain
+// table's BEFORE INSERT trigger.
+type ChangeLog map[string]map[int64]ChangeLogEntry
+
+// actorKey is the context key carrying the actor identifier that
+// populates created_by on PII rows, created_by on chain rows, and
+// changed_by on audit rows (via the AFTER UPDATE/DELETE trigger).
+// Unexported so callers must go through WithActor / actorFromContext.
+type actorKey struct{}
+
+// WithActor returns a derived context that propagates the actor
+// identifier to any PII mutation made through the generated
+// Save / SaveAll / SaveChain methods. Inside the same transaction
+// as the write the repo sets the Postgres session variable
+// `sdm.actor` from this value (scoping the attribution to that
+// transaction) AND assigns it to the created_by column on INSERT.
+// The AFTER UPDATE/DELETE trigger reads the same session variable
+// to populate audit_pii_<name>s.changed_by. Direct GORM operations
+// (db.Exec / db.Delete) that do not pass through Save / SaveAll
+// record ” for changed_by.
+func WithActor(ctx context.Context, actorID string) context.Context {
+	return context.WithValue(ctx, actorKey{}, actorID)
+}
+
+// actorFromContext extracts the actor identifier installed by
+// WithActor, or "" if absent. Used by generated repo methods.
+func actorFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(actorKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// ErrPendingDraftExists is returned by Save / Upsert / Update /
+// DraftChain when a record already has a DRAFTED chain row for one
+// of the fields being staged. The caller's recourse is to commit
+// the existing draft (CommitChain) or drop it (DropChain) before
+// re-drafting. Match with errors.Is.
+var ErrPendingDraftExists = errors.New("sdm: pending draft exists for this record; commit or drop the existing draft first")
 
 type protojsonSerializer struct{}
 
@@ -71,4 +123,81 @@ func (protojsonSerializer) Value(ctx context.Context, field *schema.Field, dst r
 		return nil, fmt.Errorf("protojson: field %s does not implement proto.Message (got %T)", field.Name, fieldValue)
 	}
 	return protojson.Marshal(msg)
+}
+
+type protojsonArraySerializer struct{}
+
+func init() {
+	schema.RegisterSerializer("protojsonArray", protojsonArraySerializer{})
+}
+
+func (protojsonArraySerializer) Scan(ctx context.Context, field *schema.Field, dst reflect.Value, dbValue interface{}) error {
+	if dbValue == nil {
+		return nil
+	}
+	var data []byte
+	switch v := dbValue.(type) {
+	case []byte:
+		data = v
+	case string:
+		data = []byte(v)
+	default:
+		return fmt.Errorf("protojsonArray: unsupported source type %T for field %s", dbValue, field.Name)
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	ft := field.FieldType
+	if ft.Kind() != reflect.Slice {
+		return fmt.Errorf("protojsonArray: field %s must be a slice", field.Name)
+	}
+	elemType := ft.Elem()
+	if elemType.Kind() != reflect.Ptr {
+		return fmt.Errorf("protojsonArray: field %s slice element must be a pointer", field.Name)
+	}
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	slice := reflect.MakeSlice(ft, 0, len(raw))
+	for _, r := range raw {
+		ptr := reflect.New(elemType.Elem())
+		msg, ok := ptr.Interface().(proto.Message)
+		if !ok {
+			return fmt.Errorf("protojsonArray: field %s element does not implement proto.Message", field.Name)
+		}
+		if err := protojson.Unmarshal(r, msg); err != nil {
+			return err
+		}
+		slice = reflect.Append(slice, ptr)
+	}
+	field.ReflectValueOf(ctx, dst).Set(slice)
+	return nil
+}
+
+func (protojsonArraySerializer) Value(ctx context.Context, field *schema.Field, dst reflect.Value, fieldValue interface{}) (interface{}, error) {
+	if fieldValue == nil {
+		return []byte("[]"), nil
+	}
+	v := reflect.ValueOf(fieldValue)
+	if v.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("protojsonArray: field %s must be a slice (got %T)", field.Name, fieldValue)
+	}
+	if v.Len() == 0 {
+		return []byte("[]"), nil
+	}
+	parts := make([]string, 0, v.Len())
+	for i := 0; i < v.Len(); i++ {
+		elem := v.Index(i).Interface()
+		msg, ok := elem.(proto.Message)
+		if !ok {
+			return nil, fmt.Errorf("protojsonArray: field %s element %d does not implement proto.Message (got %T)", field.Name, i, elem)
+		}
+		b, err := protojson.Marshal(msg)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, string(b))
+	}
+	return []byte("[" + strings.Join(parts, ",") + "]"), nil
 }

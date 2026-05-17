@@ -8,10 +8,39 @@ CREATE TABLE IF NOT EXISTS pii_users (
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted_at TIMESTAMP WITH TIME ZONE NULL,
+  created_by TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (id),
   UNIQUE (user_id),
   UNIQUE (email)
 );
+
+CREATE TABLE IF NOT EXISTS audit_pii_users (
+  id BIGSERIAL PRIMARY KEY,
+  ref_id TEXT NOT NULL,
+  last_value JSONB NOT NULL,
+  change_type TEXT NOT NULL,
+  changed_by TEXT NOT NULL DEFAULT '',
+  changed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE FUNCTION audit_pii_users_log()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO audit_pii_users (ref_id, last_value, change_type, changed_by)
+  VALUES (
+    OLD.id::text,
+    row_to_json(OLD)::jsonb,
+    TG_OP,
+    COALESCE(current_setting('sdm.actor', true), '')
+  );
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS audit_pii_users_log_trigger ON pii_users;
+CREATE TRIGGER audit_pii_users_log_trigger
+AFTER UPDATE OR DELETE ON pii_users
+FOR EACH ROW EXECUTE FUNCTION audit_pii_users_log();
 
 CREATE TABLE IF NOT EXISTS chain_users (
   key TEXT NOT NULL,
@@ -19,9 +48,34 @@ CREATE TABLE IF NOT EXISTS chain_users (
   version BIGINT NOT NULL,
   tx_hash TEXT,
   field_value TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'CREATED' CHECK (status IN ('DRAFTED', 'CREATED', 'DROPPED')),
   PRIMARY KEY (key, field_name, version)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS chain_users_one_draft
+  ON chain_users (key, field_name)
+  WHERE status = 'DRAFTED';
+
+CREATE OR REPLACE FUNCTION chain_users_status_guard()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.status = NEW.status THEN
+    RETURN NEW;
+  ELSIF OLD.status = 'DRAFTED' AND NEW.status IN ('CREATED', 'DROPPED') THEN
+    RETURN NEW;
+  ELSE
+    RAISE EXCEPTION 'illegal chain status transition: % -> %', OLD.status, NEW.status
+      USING ERRCODE = '23514';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS chain_users_status_guard_trigger ON chain_users;
+CREATE TRIGGER chain_users_status_guard_trigger
+BEFORE UPDATE ON chain_users
+FOR EACH ROW EXECUTE FUNCTION chain_users_status_guard();
 
 CREATE OR REPLACE FUNCTION chain_users_set_version()
 RETURNS TRIGGER AS $$
@@ -53,11 +107,35 @@ CREATE OR REPLACE VIEW users AS
     p.created_at,
     p.updated_at,
     p.deleted_at,
-    c_tx.tx_hash
+    p.created_by,
+    c_tx.tx_hash,
+    EXISTS (SELECT 1 FROM chain_users c WHERE c.key = p.user_id AND c.status = 'DRAFTED') AS has_pending_drafts
   FROM pii_users p
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='hashed_email' ORDER BY key, field_name, version DESC) c_hashed_email ON p.user_id = c_hashed_email.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='pan' ORDER BY key, field_name, version DESC) c_pan ON p.user_id = c_pan.key
-  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='country' ORDER BY key, field_name, version DESC) c_country ON p.user_id = c_country.key
-  LEFT JOIN (SELECT DISTINCT ON (key) key, tx_hash FROM chain_users ORDER BY key, version DESC) c_tx ON p.user_id = c_tx.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='hashed_email' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_hashed_email ON p.user_id = c_hashed_email.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='pan' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_pan ON p.user_id = c_pan.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='country' AND status = 'CREATED' ORDER BY key, field_name, version DESC) c_country ON p.user_id = c_country.key
+  LEFT JOIN (SELECT DISTINCT ON (key) key, tx_hash FROM chain_users WHERE status = 'CREATED' ORDER BY key, version DESC) c_tx ON p.user_id = c_tx.key
+;
+
+CREATE OR REPLACE VIEW users_with_drafts AS
+  SELECT
+    p.id,
+    p.user_id,
+    p.email,
+    c_hashed_email.field_value AS hashed_email,
+    p.name,
+    c_pan.field_value AS pan,
+    c_country.field_value AS country,
+    p.created_at,
+    p.updated_at,
+    p.deleted_at,
+    p.created_by,
+    c_tx.tx_hash,
+    EXISTS (SELECT 1 FROM chain_users c WHERE c.key = p.user_id AND c.status = 'DRAFTED') AS has_pending_drafts
+  FROM pii_users p
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='hashed_email' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_hashed_email ON p.user_id = c_hashed_email.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='pan' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_pan ON p.user_id = c_pan.key
+  LEFT JOIN (SELECT DISTINCT ON (key, field_name) field_value, key FROM chain_users WHERE field_name='country' AND status <> 'DROPPED' ORDER BY key, field_name, version DESC) c_country ON p.user_id = c_country.key
+  LEFT JOIN (SELECT DISTINCT ON (key) key, tx_hash FROM chain_users WHERE status <> 'DROPPED' ORDER BY key, version DESC) c_tx ON p.user_id = c_tx.key
 ;
 

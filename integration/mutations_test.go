@@ -427,7 +427,7 @@ func TestInvoice_View_AsBaseModel_SaveAllReplay(t *testing.T) {
 	repo := invoice.NewInvoiceRepo(testDB)
 	ctx := context.Background()
 
-	// Round-trip pattern: Save → Fetch → AsBaseModel → SaveAll (no-op via skip).
+	// Round-trip pattern: Create → Fetch → AsBaseModel → SaveAll (no-op via skip).
 	src := newInvoice("asbase_replay", sellerID, buyerID)
 	require.NoError(t, repo.SaveAll(ctx, src, true))
 

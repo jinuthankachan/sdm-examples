@@ -10,6 +10,13 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// InvoicePii is the GORM model for table pii_invoices — the
+// storage for fields marked (sdm.pii), plus the primary key, foreign
+// keys, and audit columns (CreatedAt / UpdatedAt / DeletedAt / CreatedBy).
+// Mutations should flow through the generated Create / Upsert / Update /
+// SaveAll methods on InvoiceRepo — direct GORM writes bypass chain
+// bookkeeping and actor attribution. DeletedAt is gorm.DeletedAt, so
+// GORM's soft-delete scope applies automatically.
 type InvoicePii struct {
 	InvoiceId string         `gorm:"column:invoice_id;primaryKey"`
 	SellerGst string         `gorm:"column:seller_gst"`
@@ -25,6 +32,13 @@ type InvoicePii struct {
 	CreatedBy string         `gorm:"column:created_by"`
 }
 
+// InvoiceChain is the GORM model for table chain_invoices — the
+// append-only per-field history. Each row records a single
+// (key, field_name, version) triple with the value at that version and
+// the actor that wrote it. Version is auto-assigned by a BEFORE INSERT
+// trigger (1-based, per (key, field_name)). With chain-drafts enabled,
+// rows also carry a Status (DRAFTED / CREATED / DROPPED); state
+// transitions are guarded by a BEFORE UPDATE trigger.
 type InvoiceChain struct {
 	Key        string    `gorm:"primaryKey;column:key"`
 	FieldName  string    `gorm:"primaryKey;column:field_name"`
@@ -36,6 +50,14 @@ type InvoiceChain struct {
 	Status     string    `gorm:"column:status"`
 }
 
+// InvoiceView is the read model returned by Fetch / FetchBy*. It joins
+// the latest committed value of every chain field with the PII row,
+// surfaces hashed_* sidecar columns, and (with chain-drafts enabled)
+// exposes HasPendingDrafts to signal that an uncommitted edit exists.
+//
+// Maps to view invoices by default; with chain-drafts enabled, the
+// repo's Fetch methods route to invoices_with_drafts when called with
+// drafted=true (the overlay shows uncommitted DRAFTED values).
 type InvoiceView struct {
 	InvoiceId        string         `gorm:"column:invoice_id"`
 	SellerGst        string         `gorm:"column:seller_gst"`
@@ -60,10 +82,24 @@ type InvoiceView struct {
 	HasPendingDrafts bool           `gorm:"column:has_pending_drafts"`
 }
 
-func (InvoicePii) TableName() string   { return "pii_invoices" }
-func (InvoiceChain) TableName() string { return "chain_invoices" }
-func (InvoiceView) TableName() string  { return "invoices" }
+// TableName returns the SQL table name backing InvoicePii.
+func (InvoicePii) TableName() string { return "pii_invoices" }
 
+// TableName returns the SQL table name backing InvoiceChain.
+func (InvoiceChain) TableName() string { return "chain_invoices" }
+
+// TableName returns the default (committed-only) view name. With chain-drafts
+// enabled, the repo's Fetch methods may route to invoices_with_drafts via .Table()
+// when drafted=true, bypassing this default.
+func (InvoiceView) TableName() string { return "invoices" }
+
+// InvoicePiiAudit is the GORM model for audit_pii_invoices — a per-row
+// snapshot taken by the AFTER UPDATE/DELETE trigger immediately BEFORE
+// each mutation. LastValue is the full PII row at the moment of capture
+// (JSONB). ChangeType is 'UPDATE' or 'DELETE'; INSERTs do not produce
+// audit rows. ChangedBy is the actor read from the `sdm.actor` Postgres
+// session variable installed by the repo (see WithActor); direct GORM
+// writes that do not pass through the repo record ” there.
 type InvoicePiiAudit struct {
 	Id         int64          `gorm:"column:id;primaryKey;autoIncrement"`
 	RefId      string         `gorm:"column:ref_id"`
@@ -73,8 +109,13 @@ type InvoicePiiAudit struct {
 	ChangedAt  time.Time      `gorm:"column:changed_at"`
 }
 
+// TableName returns the SQL table name backing InvoicePiiAudit.
 func (InvoicePiiAudit) TableName() string { return "audit_pii_invoices" }
 
+// EnsureUnique reports whether no other chain row has the same
+// (FieldName, FieldValue) — a uniqueness probe for callers that want to
+// enforce global uniqueness of a specific chain value before staging or
+// committing it. Returns false if the query errors.
 func (c *InvoiceChain) EnsureUnique(tx *gorm.DB) bool {
 	var count int64
 	err := tx.Model(&InvoiceChain{}).Where("field_name = ? AND field_value = ?", c.FieldName, c.FieldValue).Count(&count).Error
@@ -84,6 +125,14 @@ func (c *InvoiceChain) EnsureUnique(tx *gorm.DB) bool {
 	return count == 0
 }
 
+// AsBaseModel converts the view back to a base proto Invoice — useful for
+// re-saving (View → AsBaseModel → mutate → Upsert/Update/SaveAll). Audit
+// columns (CreatedAt / UpdatedAt / DeletedAt / TxHash / CreatedBy) and
+// hashed_* sidecars are not copied; they have no counterpart on the base
+// proto. Per-field: Timestamps become *timestamppb.Timestamp (skipped if
+// zero), repeated scalars (pq.StringArray) become []string, JSON sidecars
+// (datatypes.JSON) become string, and singular/repeated messages are
+// passed through (the serializers already decoded them on the View).
 func (v *InvoiceView) AsBaseModel() *Invoice {
 	base := &Invoice{}
 	base.InvoiceId = v.InvoiceId

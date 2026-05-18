@@ -17,15 +17,33 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// InvoiceRepo is the data-access handle for Invoice. The actor
+// identifier used for audit attribution flows via ctx (see WithActor);
+// the repo is stateless and safe for concurrent use by multiple goroutines.
 type InvoiceRepo struct {
 	db *gorm.DB
 }
 
+// NewInvoiceRepo returns a repo bound to db. Pass a *gorm.DB configured
+// against the same database the generated schema was applied to. Sharing
+// a single *gorm.DB across goroutines is fine — GORM's connection pool
+// handles per-call isolation.
 func NewInvoiceRepo(db *gorm.DB) *InvoiceRepo {
 	return &InvoiceRepo{db: db}
 }
 
-func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
+// Create inserts a new PII row strictly — PK / unique-index violations
+// surface as the driver-native error (e.g. *pgconn.PgError SQLSTATE
+// 23505), not an upsert. Auto-increment PKs are copied back onto the
+// passed model.
+//
+// chain-drafts ON: in the same transaction, every chain-stored field
+// (and any hashed sidecars) is written as a DRAFTED chain row. Those
+// rows are NOT yet visible in the committed view — callers must call
+// CommitChain(...) to promote them, or DropChain(...) to discard.
+// ErrPendingDraftExists is returned if any chain field already has a
+// DRAFTED row for this key.
+func (r *InvoiceRepo) Create(ctx context.Context, model *Invoice) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		_actor := actorFromContext(ctx)
 		if _actor != "" {
@@ -213,6 +231,13 @@ func (r *InvoiceRepo) Save(ctx context.Context, model *Invoice) error {
 	})
 }
 
+// Upsert is the chain-drafts equivalent of SaveAll: PII INSERT on miss
+// or UPDATE on conflict against the chain identifier key (mutable
+// columns only), followed by DraftChain in the same transaction.
+// Chain rows are written as DRAFTED — they are NOT visible in the
+// committed view until CommitChain is called. Returns
+// ErrPendingDraftExists if any chain field already has a pending
+// DRAFTED row for this key.
 func (r *InvoiceRepo) Upsert(ctx context.Context, model *Invoice) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		_actor := actorFromContext(ctx)
@@ -404,6 +429,13 @@ func (r *InvoiceRepo) Upsert(ctx context.Context, model *Invoice) error {
 	})
 }
 
+// Update strictly UPDATEs the PII row (no insert-on-miss — use Upsert
+// for that) and stages DRAFTED chain entries for every chain-stored
+// field whose value differs from the latest committed value. Only the
+// mutable columns are touched; created_by and created_at stay intact.
+// Returns gorm.ErrRecordNotFound if the PII row does not exist, or
+// ErrPendingDraftExists if any chain field already has a pending
+// DRAFTED row for this key.
 func (r *InvoiceRepo) Update(ctx context.Context, model *Invoice) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		_actor := actorFromContext(ctx)
@@ -599,6 +631,13 @@ func (r *InvoiceRepo) Update(ctx context.Context, model *Invoice) error {
 	})
 }
 
+// DraftChain stages chain edits without touching the PII row. For every
+// chain-stored field whose value differs from the latest CREATED entry,
+// a new row is appended with Status='DRAFTED'. At most one DRAFTED row
+// per (key, field_name) is allowed (enforced by a partial unique
+// index); a second draft surfaces ErrPendingDraftExists. For chain-only
+// messages this is the primary ingestion path; for PII-backed messages
+// it lets callers stage chain edits separately from PII writes.
 func (r *InvoiceRepo) DraftChain(ctx context.Context, model *Invoice) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		_actor := actorFromContext(ctx)
@@ -767,6 +806,12 @@ func (r *InvoiceRepo) DraftChain(ctx context.Context, model *Invoice) error {
 	})
 }
 
+// CommitChain promotes every DRAFTED row for this key to CREATED in a
+// single atomic UPDATE and stamps the supplied txHash on the promoted
+// rows (pass "" if not applicable). The state-machine BEFORE UPDATE
+// trigger guards the DRAFTED → CREATED transition. Idempotent: a no-op
+// when no DRAFTED rows exist for the key. After commit, the rows are
+// visible from the committed view.
 func (r *InvoiceRepo) CommitChain(ctx context.Context, invoiceId string, txHash string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		_actor := actorFromContext(ctx)
@@ -782,6 +827,11 @@ func (r *InvoiceRepo) CommitChain(ctx context.Context, invoiceId string, txHash 
 	})
 }
 
+// DropChain promotes every DRAFTED row for this key to DROPPED in a
+// single UPDATE — discards a pending edit without committing. The
+// dropped rows remain in the chain table as audit history; they are
+// not visible from either view. Idempotent: no-op when no DRAFTED rows
+// exist for the key.
 func (r *InvoiceRepo) DropChain(ctx context.Context, invoiceId string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		_actor := actorFromContext(ctx)
@@ -797,6 +847,13 @@ func (r *InvoiceRepo) DropChain(ctx context.Context, invoiceId string) error {
 	})
 }
 
+// Fetch reads the view row keyed by the primary key, scoped to
+// non-soft-deleted records (deleted_at IS NULL). Returns
+// gorm.ErrRecordNotFound if no row matches.
+//
+// drafted=true reads from the invoices_with_drafts overlay view
+// (uncommitted DRAFTED values visible); drafted=false reads from the
+// committed view. HasPendingDrafts on the result is populated either way.
 func (r *InvoiceRepo) Fetch(ctx context.Context, invoiceId string, drafted bool) (*InvoiceView, error) {
 	var view InvoiceView
 	_table := "invoices"
@@ -809,6 +866,8 @@ func (r *InvoiceRepo) Fetch(ctx context.Context, invoiceId string, drafted bool)
 	return &view, nil
 }
 
+// Exists reports whether a non-soft-deleted PII row exists for the given
+// primary key. Not draft-aware — answered by committed PII state.
 func (r *InvoiceRepo) Exists(ctx context.Context, invoiceId string) (bool, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&InvoicePii{}).Where("invoice_id = ?", invoiceId).Where("deleted_at IS NULL").Count(&count).Error; err != nil {
@@ -817,6 +876,13 @@ func (r *InvoiceRepo) Exists(ctx context.Context, invoiceId string) (bool, error
 	return count > 0, nil
 }
 
+// AuditLog returns the audit_pii_invoices history for a single
+// record, chronologically (oldest first). Each row is a snapshot of the
+// PII row taken immediately BEFORE an UPDATE or DELETE by the AFTER
+// trigger; INSERTs do not produce audit rows, so a record that was
+// inserted but never modified returns the empty slice. Param signature
+// mirrors Fetch — takes the PK; for composite PKs the audit ref_id is
+// the PK components joined with ':'.
 func (r *InvoiceRepo) AuditLog(ctx context.Context, invoiceId string) ([]InvoicePiiAudit, error) {
 	var rows []InvoicePiiAudit
 	if err := r.db.WithContext(ctx).
@@ -828,6 +894,14 @@ func (r *InvoiceRepo) AuditLog(ctx context.Context, invoiceId string) ([]Invoice
 	return rows, nil
 }
 
+// ChangeLog returns the full per-field version history for a single record,
+// grouped by field_name then version (1-based, ascending). With
+// chain-drafts enabled the result includes rows of every status (DRAFTED
+// / CREATED / DROPPED) — filter by status on the returned entries if
+// only committed history is wanted. Soft-deleted PII rows do NOT mask
+// chain history (chain entries persist independently). Returns
+// gorm.ErrRecordNotFound when no chain rows exist for the key. Param
+// signature mirrors Create — takes the chain identifier key field(s).
 func (r *InvoiceRepo) ChangeLog(ctx context.Context, invoiceId string) (ChangeLog, error) {
 	var rows []InvoiceChain
 	if err := r.db.WithContext(ctx).

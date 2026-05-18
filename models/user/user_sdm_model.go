@@ -8,6 +8,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// UserPii is the GORM model for table pii_users — the
+// storage for fields marked (sdm.pii), plus the primary key, foreign
+// keys, and audit columns (CreatedAt / UpdatedAt / DeletedAt / CreatedBy).
+// Mutations should flow through the generated Create / Upsert / Update /
+// SaveAll methods on UserRepo — direct GORM writes bypass chain
+// bookkeeping and actor attribution. DeletedAt is gorm.DeletedAt, so
+// GORM's soft-delete scope applies automatically.
 type UserPii struct {
 	Id        int64          `gorm:"column:id;primaryKey;autoIncrement"`
 	UserId    string         `gorm:"column:user_id;uniqueIndex"`
@@ -19,6 +26,13 @@ type UserPii struct {
 	CreatedBy string         `gorm:"column:created_by"`
 }
 
+// UserChain is the GORM model for table chain_users — the
+// append-only per-field history. Each row records a single
+// (key, field_name, version) triple with the value at that version and
+// the actor that wrote it. Version is auto-assigned by a BEFORE INSERT
+// trigger (1-based, per (key, field_name)). With chain-drafts enabled,
+// rows also carry a Status (DRAFTED / CREATED / DROPPED); state
+// transitions are guarded by a BEFORE UPDATE trigger.
 type UserChain struct {
 	Key        string    `gorm:"primaryKey;column:key"`
 	FieldName  string    `gorm:"primaryKey;column:field_name"`
@@ -30,6 +44,14 @@ type UserChain struct {
 	Status     string    `gorm:"column:status"`
 }
 
+// UserView is the read model returned by Fetch / FetchBy*. It joins
+// the latest committed value of every chain field with the PII row,
+// surfaces hashed_* sidecar columns, and (with chain-drafts enabled)
+// exposes HasPendingDrafts to signal that an uncommitted edit exists.
+//
+// Maps to view users by default; with chain-drafts enabled, the
+// repo's Fetch methods route to users_with_drafts when called with
+// drafted=true (the overlay shows uncommitted DRAFTED values).
 type UserView struct {
 	Id               int64          `gorm:"column:id"`
 	UserId           string         `gorm:"column:user_id"`
@@ -46,10 +68,24 @@ type UserView struct {
 	HasPendingDrafts bool           `gorm:"column:has_pending_drafts"`
 }
 
-func (UserPii) TableName() string   { return "pii_users" }
-func (UserChain) TableName() string { return "chain_users" }
-func (UserView) TableName() string  { return "users" }
+// TableName returns the SQL table name backing UserPii.
+func (UserPii) TableName() string { return "pii_users" }
 
+// TableName returns the SQL table name backing UserChain.
+func (UserChain) TableName() string { return "chain_users" }
+
+// TableName returns the default (committed-only) view name. With chain-drafts
+// enabled, the repo's Fetch methods may route to users_with_drafts via .Table()
+// when drafted=true, bypassing this default.
+func (UserView) TableName() string { return "users" }
+
+// UserPiiAudit is the GORM model for audit_pii_users — a per-row
+// snapshot taken by the AFTER UPDATE/DELETE trigger immediately BEFORE
+// each mutation. LastValue is the full PII row at the moment of capture
+// (JSONB). ChangeType is 'UPDATE' or 'DELETE'; INSERTs do not produce
+// audit rows. ChangedBy is the actor read from the `sdm.actor` Postgres
+// session variable installed by the repo (see WithActor); direct GORM
+// writes that do not pass through the repo record ” there.
 type UserPiiAudit struct {
 	Id         int64          `gorm:"column:id;primaryKey;autoIncrement"`
 	RefId      string         `gorm:"column:ref_id"`
@@ -59,8 +95,13 @@ type UserPiiAudit struct {
 	ChangedAt  time.Time      `gorm:"column:changed_at"`
 }
 
+// TableName returns the SQL table name backing UserPiiAudit.
 func (UserPiiAudit) TableName() string { return "audit_pii_users" }
 
+// EnsureUnique reports whether no other chain row has the same
+// (FieldName, FieldValue) — a uniqueness probe for callers that want to
+// enforce global uniqueness of a specific chain value before staging or
+// committing it. Returns false if the query errors.
 func (c *UserChain) EnsureUnique(tx *gorm.DB) bool {
 	var count int64
 	err := tx.Model(&UserChain{}).Where("field_name = ? AND field_value = ?", c.FieldName, c.FieldValue).Count(&count).Error
@@ -70,6 +111,14 @@ func (c *UserChain) EnsureUnique(tx *gorm.DB) bool {
 	return count == 0
 }
 
+// AsBaseModel converts the view back to a base proto User — useful for
+// re-saving (View → AsBaseModel → mutate → Upsert/Update/SaveAll). Audit
+// columns (CreatedAt / UpdatedAt / DeletedAt / TxHash / CreatedBy) and
+// hashed_* sidecars are not copied; they have no counterpart on the base
+// proto. Per-field: Timestamps become *timestamppb.Timestamp (skipped if
+// zero), repeated scalars (pq.StringArray) become []string, JSON sidecars
+// (datatypes.JSON) become string, and singular/repeated messages are
+// passed through (the serializers already decoded them on the View).
 func (v *UserView) AsBaseModel() *User {
 	base := &User{}
 	base.Id = v.Id

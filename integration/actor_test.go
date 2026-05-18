@@ -115,15 +115,15 @@ func TestActor_View_SurfacesCreatedBy(t *testing.T) {
 // remaining ingestion paths is already covered by
 // TestActor_WithActor_PopulatesPiiAndChain (via SaveAll).
 
-func TestActor_Save_StrictInsert_PopulatesCreatedBy(t *testing.T) {
-	// Save is PII-only strict INSERT; verify the actor column is set
+func TestActor_Create_StrictInsert_PopulatesCreatedBy(t *testing.T) {
+	// Create is PII-only strict INSERT; verify the actor column is set
 	// without going through SaveAll.
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := user.WithActor(context.Background(), "strict-insert")
 
 	u := newUser("strict")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	var pii user.UserPii
 	require.NoError(t, testDB.First(&pii, "id = ?", u.Id).Error)

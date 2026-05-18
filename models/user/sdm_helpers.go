@@ -65,7 +65,7 @@ func actorFromContext(ctx context.Context) string {
 	return ""
 }
 
-// ErrPendingDraftExists is returned by Save / Upsert / Update /
+// ErrPendingDraftExists is returned by Create / Upsert / Update /
 // DraftChain when a record already has a DRAFTED chain row for one
 // of the fields being staged. The caller's recourse is to commit
 // the existing draft (CommitChain) or drop it (DropChain) before

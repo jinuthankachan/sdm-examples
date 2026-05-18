@@ -21,11 +21,11 @@ import (
 // files share the same helpers.
 
 // ────────────────────────────────────────────────────────────────────────
-// Save → DraftChain wiring (the half-state under feature ON)
+// Create → DraftChain wiring (the half-state under feature ON)
 // ────────────────────────────────────────────────────────────────────────
 
-func TestChainDrafts_Save_StagesChainAsDrafted(t *testing.T) {
-	// Save commits PII immediately but stages chain rows as DRAFTED. The
+func TestChainDrafts_Create_StagesChainAsDrafted(t *testing.T) {
+	// Create commits PII immediately but stages chain rows as DRAFTED. The
 	// committed view sees PII columns populated and chain columns NULL
 	// until CommitChain runs.
 	resetTables(t)
@@ -33,7 +33,7 @@ func TestChainDrafts_Save_StagesChainAsDrafted(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("save_drafts")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	// Committed view: chain columns hidden, HasPendingDrafts=true.
 	committed, err := repo.Fetch(ctx, u.Id, false)
@@ -57,7 +57,7 @@ func TestChainDrafts_CommitChain_PromotesDraftedToCreated(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("commit_workflow")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.CommitChain(ctx, u.UserId, "tx-abc-123"))
 
 	v, err := repo.Fetch(ctx, u.Id, false)
@@ -73,7 +73,7 @@ func TestChainDrafts_DropChain_DiscardsDrafted(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("drop_workflow")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.DropChain(ctx, u.UserId))
 
 	// Committed view: chain values stay NULL (the drafts were dropped, not
@@ -104,7 +104,7 @@ func TestChainDrafts_DraftTwice_ReturnsErrPendingDraft(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("double_draft")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	// Second draft of a different value for the same key+field collides
 	// with the partial unique index.
@@ -121,7 +121,7 @@ func TestChainDrafts_DropThenRedraft_Succeeds(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("redraft_after_drop")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.DropChain(ctx, u.UserId))
 
 	// After DropChain there are no DRAFTED rows; re-drafting is allowed.
@@ -143,7 +143,7 @@ func TestChainDrafts_Upsert_PromotesAndRedrafts(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("upsert_cycle")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.CommitChain(ctx, u.UserId, "tx1"))
 
 	// Second pass: change a field. Upsert path drafts the new value.
@@ -161,7 +161,7 @@ func TestChainDrafts_Update_ErrorsWhenMissing(t *testing.T) {
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 
-	// No prior Save — Update must error rather than insert.
+	// No prior Create — Update must error rather than insert.
 	u := newDraftUser("strict_update_missing")
 	u.Id = 99999 // a row that doesn't exist
 	err := repo.Update(context.Background(), u)
@@ -179,7 +179,7 @@ func TestChainDrafts_SkipIfUnchanged_AgainstCreatedBaseline(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("skip_unchanged")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.CommitChain(ctx, u.UserId, ""))
 
 	// Re-saving the same values: DraftChain should produce zero new rows.
@@ -205,7 +205,7 @@ func TestChainDrafts_Trigger_BlocksCreatedToDropped(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("trigger_guard")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.CommitChain(ctx, u.UserId, ""))
 
 	// Now attempt CREATED → DROPPED via raw SQL.
@@ -223,7 +223,7 @@ func TestChainDrafts_Trigger_BlocksDroppedToCreated(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("trigger_revival")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.DropChain(ctx, u.UserId))
 
 	err := testDB.Exec(
@@ -255,7 +255,7 @@ func TestChainDrafts_OverlayShowsLatestNonDropped(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("overlay_supersede")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.CommitChain(ctx, u.UserId, ""))
 
 	u.Country = "DE"
@@ -280,7 +280,7 @@ func TestChainDrafts_ActorFlowsIntoDraftAndCommit(t *testing.T) {
 	repo := user.NewUserRepo(testDB)
 
 	u := newDraftUser("actor_in_drafts")
-	require.NoError(t, repo.Save(user.WithActor(context.Background(), "alice"), u))
+	require.NoError(t, repo.Create(user.WithActor(context.Background(), "alice"), u))
 
 	// CreatedBy is set on the DRAFTED chain rows.
 	var draftedBy []string

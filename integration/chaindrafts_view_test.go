@@ -42,7 +42,7 @@ func TestChainDrafts_ChangeLog_IncludesAllStatuses(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("changelog_all")
-	require.NoError(t, repo.Save(ctx, u))                     // → drafts
+	require.NoError(t, repo.Create(ctx, u))                     // → drafts
 	require.NoError(t, repo.CommitChain(ctx, u.UserId, ""))   // v1 CREATED for each chain field
 	u.Country = "DE"
 	require.NoError(t, repo.Upsert(ctx, u))                   // → 'country' v2 DRAFTED
@@ -98,7 +98,7 @@ func TestChainDrafts_ChangeLog_Missing_ReturnsErrNotFound(t *testing.T) {
 // ────────────────────────────────────────────────────────────────────────
 
 func TestChainDrafts_AsBaseModel_FromCommittedView(t *testing.T) {
-	// Round-trip: Save+Commit → Fetch(_, false) → AsBaseModel → match.
+	// Round-trip: Create+Commit → Fetch(_, false) → AsBaseModel → match.
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
@@ -126,7 +126,7 @@ func TestChainDrafts_AsBaseModel_FromOverlayView(t *testing.T) {
 	ctx := context.Background()
 
 	src := newDraftUser("asbase_overlay")
-	require.NoError(t, repo.Save(ctx, src)) // chain fields DRAFTED, not committed
+	require.NoError(t, repo.Create(ctx, src)) // chain fields DRAFTED, not committed
 
 	view, err := repo.Fetch(ctx, src.Id, true) // overlay
 	require.NoError(t, err)
@@ -193,7 +193,7 @@ func TestChainDrafts_AsBaseModel_Upsert_Replay(t *testing.T) {
 // ────────────────────────────────────────────────────────────────────────
 
 func TestChainDrafts_HasPendingDrafts_LifecycleFlips(t *testing.T) {
-	// HasPendingDrafts walks through true (after Save) → false (after
+	// HasPendingDrafts walks through true (after Create) → false (after
 	// CommitChain) → true (after a follow-up DraftChain) → false (after
 	// DropChain). One signal, four transitions.
 	resetTables(t)
@@ -201,11 +201,11 @@ func TestChainDrafts_HasPendingDrafts_LifecycleFlips(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("hpd_lifecycle")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	v, err := repo.Fetch(ctx, u.Id, false)
 	require.NoError(t, err)
-	require.True(t, v.HasPendingDrafts, "post-Save: drafts pending")
+	require.True(t, v.HasPendingDrafts, "post-Create: drafts pending")
 
 	require.NoError(t, repo.CommitChain(ctx, u.UserId, ""))
 	v, err = repo.Fetch(ctx, u.Id, false)
@@ -234,7 +234,7 @@ func TestChainDrafts_View_TxHash_TracksLatestCommit(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("txhash_track")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 	require.NoError(t, repo.CommitChain(ctx, u.UserId, "tx-1"))
 
 	v, err := repo.Fetch(ctx, u.Id, false)
@@ -260,7 +260,7 @@ func TestChainDrafts_CommitChain_PromotesAllDraftedForKeyAtomically(t *testing.T
 	ctx := context.Background()
 
 	u := newDraftUser("multi_field_commit")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	// Before commit: every chain field is DRAFTED.
 	var draftedCount int64

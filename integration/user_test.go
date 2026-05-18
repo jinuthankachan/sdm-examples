@@ -49,20 +49,20 @@ func TestUser_SaveAll_RoundTrip(t *testing.T) {
 	require.Equal(t, u.Country, view.Country)
 }
 
-func TestUser_Save_PiiOnly(t *testing.T) {
+func TestUser_Create_PiiOnly(t *testing.T) {
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
 
 	u := newUser("u_pii_only")
-	// New Save is a strict INSERT against pii_users only — chain is untouched.
-	require.NoError(t, repo.Save(ctx, u))
+	// New Create is a strict INSERT against pii_users only — chain is untouched.
+	require.NoError(t, repo.Create(ctx, u))
 
 	var piiCount, chainCount int64
 	require.NoError(t, testDB.Table("pii_users").Count(&piiCount).Error)
 	require.NoError(t, testDB.Table("chain_users").Count(&chainCount).Error)
 	require.Equal(t, int64(1), piiCount)
-	require.Equal(t, int64(0), chainCount, "Save must not touch chain table")
+	require.Equal(t, int64(0), chainCount, "Create must not touch chain table")
 }
 
 // TestUser_SaveChain_Only — removed. The "chain-only write on a PII-backed
@@ -79,8 +79,8 @@ func TestUser_AutoIncrement_IdAssigned(t *testing.T) {
 
 	u1 := newUser("auto_1")
 	u2 := newUser("auto_2")
-	require.NoError(t, repo.Save(ctx, u1))
-	require.NoError(t, repo.Save(ctx, u2))
+	require.NoError(t, repo.Create(ctx, u1))
+	require.NoError(t, repo.Create(ctx, u2))
 	require.Equal(t, int64(1), u1.Id)
 	require.Equal(t, int64(2), u2.Id, "BIGSERIAL should hand out sequential ids")
 }
@@ -128,7 +128,7 @@ func TestUser_HashedEmail_Stored(t *testing.T) {
 	require.Equal(t, expected, view.HashedEmail)
 }
 
-func TestUser_Save_UniqueEmailViolation(t *testing.T) {
+func TestUser_Create_UniqueEmailViolation(t *testing.T) {
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
@@ -137,10 +137,10 @@ func TestUser_Save_UniqueEmailViolation(t *testing.T) {
 	u2 := newUser("dup_b")
 	u2.Email = u1.Email // force conflict on the UNIQUE constraint
 
-	// Save is a strict INSERT; a UNIQUE collision propagates as an error.
-	require.NoError(t, repo.Save(ctx, u1))
-	err := repo.Save(ctx, u2)
-	require.Error(t, err, "Save with duplicate email should violate UNIQUE")
+	// Create is a strict INSERT; a UNIQUE collision propagates as an error.
+	require.NoError(t, repo.Create(ctx, u1))
+	err := repo.Create(ctx, u2)
+	require.Error(t, err, "Create with duplicate email should violate UNIQUE")
 	lower := strings.ToLower(err.Error())
 	require.True(t,
 		strings.Contains(lower, "duplicate") || strings.Contains(lower, "unique"),
@@ -181,7 +181,7 @@ func TestUser_FetchByEmail_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("by_email")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	view, err := repo.FetchByEmail(ctx, u.Email)
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestUser_ExistsByEmail(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("exists_email")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	got, err := repo.ExistsByEmail(ctx, u.Email)
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestUser_ExistsByPan_KnownIssue(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("pan_quirk")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	_, err := repo.ExistsByPan(ctx, u.Pan)
 	require.Error(t, err, "ExistsByPan should fail until pan is in PII table")
@@ -265,7 +265,7 @@ func TestUser_AuditFields_Populated(t *testing.T) {
 
 	before := time.Now().UTC().Add(-time.Second)
 	u := newUser("audit_fields")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	view, err := repo.Fetch(ctx, u.Id)
 	require.NoError(t, err)
@@ -285,7 +285,7 @@ func TestUser_SoftDelete_HidesFromFetch(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("soft_delete_fetch")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	require.NoError(t, testDB.Exec(
 		`UPDATE pii_users SET deleted_at = NOW() WHERE id = ?`, u.Id,
@@ -303,7 +303,7 @@ func TestUser_SoftDelete_HidesFromFetchByEmail(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("soft_delete_email")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	require.NoError(t, testDB.Exec(
 		`UPDATE pii_users SET deleted_at = NOW() WHERE id = ?`, u.Id,
@@ -320,7 +320,7 @@ func TestUser_SoftDelete_ExistsReturnsFalse(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("soft_delete_exists")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	require.NoError(t, testDB.Exec(
 		`UPDATE pii_users SET deleted_at = NOW() WHERE id = ?`, u.Id,
@@ -341,7 +341,7 @@ func TestUser_SoftDelete_ViaGormDelete(t *testing.T) {
 	ctx := context.Background()
 
 	u := newUser("gorm_delete")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	// GORM's `.Delete()` on a model with gorm.DeletedAt soft-deletes (sets
 	// deleted_at = NOW()) instead of issuing a real DELETE. This proves the

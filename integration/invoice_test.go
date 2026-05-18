@@ -61,7 +61,7 @@ func minimalInvoice(id, sellerID, buyerID string) *invoice.Invoice {
 	}
 }
 
-func TestInvoice_Save_RoundTrip(t *testing.T) {
+func TestInvoice_Create_RoundTrip(t *testing.T) {
 	resetTables(t)
 	sellerID, buyerID := seedTwoUsers(t)
 	repo := invoice.NewInvoiceRepo(testDB)

@@ -38,7 +38,7 @@ func main() {
 		Pan:     "123456789",
 		Country: "US",
 	}
-	if err := userRepo.Save(ctx, u1); err != nil {
+	if err := userRepo.Create(ctx, u1); err != nil {
 		panic(fmt.Errorf("save user_1: %w", err))
 	}
 	if err := userRepo.CommitChain(ctx, u1.UserId, ""); err != nil {
@@ -52,7 +52,7 @@ func main() {
 		Pan:     "987654321",
 		Country: "US",
 	}
-	if err := userRepo.Save(ctx, u2); err != nil {
+	if err := userRepo.Create(ctx, u2); err != nil {
 		panic(fmt.Errorf("save user_2: %w", err))
 	}
 	if err := userRepo.CommitChain(ctx, u2.UserId, ""); err != nil {
@@ -69,7 +69,7 @@ func main() {
 			Unit:  "INR",
 		},
 	}
-	if err := repo.Save(ctx, i); err != nil {
+	if err := repo.Create(ctx, i); err != nil {
 		panic(fmt.Errorf("save invoice: %w", err))
 	}
 	if err := repo.CommitChain(ctx, i.InvoiceId, ""); err != nil {

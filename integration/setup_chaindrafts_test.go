@@ -70,13 +70,13 @@ func seedTwoUsers(t *testing.T) (sellerID, buyerID string) {
 	return seller.UserId, buyer.UserId
 }
 
-// commitInvoice runs Save followed by CommitChain — the chain-drafts
+// commitInvoice runs Create followed by CommitChain — the chain-drafts
 // equivalent of a single SaveAll(_, true).
 func commitInvoice(t *testing.T, inv *invoice.Invoice) {
 	t.Helper()
 	repo := invoice.NewInvoiceRepo(testDB)
 	ctx := context.Background()
-	if err := repo.Save(ctx, inv); err != nil {
+	if err := repo.Create(ctx, inv); err != nil {
 		t.Fatalf("save invoice %s: %v", inv.InvoiceId, err)
 	}
 	if err := repo.CommitChain(ctx, inv.InvoiceId, ""); err != nil {
@@ -84,13 +84,13 @@ func commitInvoice(t *testing.T, inv *invoice.Invoice) {
 	}
 }
 
-// commitUser runs Save followed by CommitChain — the chain-drafts
+// commitUser runs Create followed by CommitChain — the chain-drafts
 // equivalent of a single SaveAll(_, true).
 func commitUser(t *testing.T, u *user.User) {
 	t.Helper()
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
-	if err := repo.Save(ctx, u); err != nil {
+	if err := repo.Create(ctx, u); err != nil {
 		t.Fatalf("save user %s: %v", u.UserId, err)
 	}
 	if err := repo.CommitChain(ctx, u.UserId, ""); err != nil {

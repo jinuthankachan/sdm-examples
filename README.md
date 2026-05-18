@@ -13,8 +13,8 @@ generator, covering both feature modes:
 
 | Mode | Config knob | Method surface |
 |---|---|---|
-| OFF (default for demo regen) | `chain-drafts: false` | `Save` / `SaveAll` / `Fetch(pk)` |
-| ON | `chain-drafts: true` | `Save` / `Upsert` / `Update` / `DraftChain` / `CommitChain` / `DropChain` / `Fetch(pk, drafted)` |
+| OFF (default for demo regen) | `chain-drafts: false` | `Create` / `SaveAll` / `Fetch(pk)` |
+| ON | `chain-drafts: true` | `Create` / `Upsert` / `Update` / `DraftChain` / `CommitChain` / `DropChain` / `Fetch(pk, drafted)` |
 
 A second knob `create-audit-tables: true|false` gates the per-PII audit
 table + trigger + `AuditLog` method. The integration tests use Go build
@@ -82,10 +82,10 @@ go run .
 docker compose down -v
 ```
 
-`main.go` is written against the **chain-drafts ON** API (`Save` →
+`main.go` is written against the **chain-drafts ON** API (`Create` →
 `CommitChain`) — flip `chain-drafts` to `false` in `sdm.cfg.yaml`,
-regenerate, and you'd need to replace the `CommitChain` calls with
-`SaveAll(..., true)`.
+regenerate, and you'd need to replace the `Create` + `CommitChain` calls
+with `SaveAll(..., true)`.
 
 ## Running the test suite
 

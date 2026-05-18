@@ -1,6 +1,6 @@
 //go:build chaindrafts
 
-// Chain-drafts PII operations — Save/Upsert/Update/Exists/FetchBy* under the
+// Chain-drafts PII operations — Create/Upsert/Update/Exists/FetchBy* under the
 // draft workflow, plus soft-delete and the hashed sidecar.
 
 package integration
@@ -25,7 +25,7 @@ import (
 // ────────────────────────────────────────────────────────────────────────
 
 func TestChainDrafts_AutoIncrement_IdAssigned(t *testing.T) {
-	// Save is strict INSERT; the BIGSERIAL `id` should be populated on the
+	// Create is strict INSERT; the BIGSERIAL `id` should be populated on the
 	// model after the call returns, same as OFF mode.
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
@@ -33,8 +33,8 @@ func TestChainDrafts_AutoIncrement_IdAssigned(t *testing.T) {
 
 	u1 := newDraftUser("auto_1")
 	u2 := newDraftUser("auto_2")
-	require.NoError(t, repo.Save(ctx, u1))
-	require.NoError(t, repo.Save(ctx, u2))
+	require.NoError(t, repo.Create(ctx, u1))
+	require.NoError(t, repo.Create(ctx, u2))
 	require.Equal(t, int64(1), u1.Id)
 	require.Equal(t, int64(2), u2.Id, "BIGSERIAL should hand out sequential ids")
 }
@@ -58,8 +58,8 @@ func TestChainDrafts_ChainIdentifierKey_IsUserId(t *testing.T) {
 // Strict-insert conflict surfaces
 // ────────────────────────────────────────────────────────────────────────
 
-func TestChainDrafts_Save_UniqueEmailViolation(t *testing.T) {
-	// Save is strict INSERT on PII — a UNIQUE collision surfaces as a
+func TestChainDrafts_Create_UniqueEmailViolation(t *testing.T) {
+	// Create is strict INSERT on PII — a UNIQUE collision surfaces as a
 	// driver error, before any chain rows get drafted. The first row's
 	// drafts remain pending.
 	resetTables(t)
@@ -70,8 +70,8 @@ func TestChainDrafts_Save_UniqueEmailViolation(t *testing.T) {
 	u2 := newDraftUser("dup_b")
 	u2.Email = u1.Email // collide on UNIQUE(email)
 
-	require.NoError(t, repo.Save(ctx, u1))
-	err := repo.Save(ctx, u2)
+	require.NoError(t, repo.Create(ctx, u1))
+	err := repo.Create(ctx, u2)
 	require.Error(t, err)
 	lower := strings.ToLower(err.Error())
 	require.True(t,
@@ -91,7 +91,7 @@ func TestChainDrafts_HashedEmail_DraftedAndCommitted(t *testing.T) {
 	ctx := context.Background()
 
 	u := newDraftUser("hash_test")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	// Before commit: both email-related chain rows are DRAFTED.
 	var statuses []string
@@ -126,7 +126,7 @@ func TestChainDrafts_AuditFields_Populated(t *testing.T) {
 
 	before := time.Now().UTC().Add(-time.Second)
 	u := newDraftUser("audit_fields")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	// Use overlay so chain fields don't bother us — we just want PII audit cols.
 	view, err := repo.Fetch(ctx, u.Id, true)
@@ -166,7 +166,7 @@ func TestChainDrafts_FetchByPan_OnlyVisibleViaOverlayBeforeCommit(t *testing.T) 
 	ctx := context.Background()
 
 	u := newDraftUser("pan_via_overlay")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	// Committed view doesn't see drafted pan → no row matches.
 	_, err := repo.FetchByPan(ctx, u.Pan, false)
@@ -186,18 +186,18 @@ func TestChainDrafts_FetchByPan_OnlyVisibleViaOverlayBeforeCommit(t *testing.T) 
 // ────────────────────────────────────────────────────────────────────────
 
 func TestChainDrafts_Exists_AfterSaveTrueBeforeCommit(t *testing.T) {
-	// Exists checks the PII table, which is committed at Save time
-	// regardless of chain status. Returns true immediately after Save.
+	// Exists checks the PII table, which is committed at Create time
+	// regardless of chain status. Returns true immediately after Create.
 	resetTables(t)
 	repo := user.NewUserRepo(testDB)
 	ctx := context.Background()
 
 	u := newDraftUser("exists_immediate")
-	require.NoError(t, repo.Save(ctx, u))
+	require.NoError(t, repo.Create(ctx, u))
 
 	exists, err := repo.Exists(ctx, u.Id)
 	require.NoError(t, err)
-	require.True(t, exists, "PII row exists immediately after Save")
+	require.True(t, exists, "PII row exists immediately after Create")
 
 	existsByEmail, err := repo.ExistsByEmail(ctx, u.Email)
 	require.NoError(t, err)
@@ -339,4 +339,85 @@ func TestChainDrafts_Schema_CheckConstraintRejectsBogusStatus(t *testing.T) {
 		 VALUES ('check_test', 'pan', 1, 'XYZ', 'WHATEVER')`,
 	).Error
 	require.Error(t, err, "CHECK constraint must reject unknown status")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// ExistsByEmail / FetchByPan committed-view / Timestamps schema /
+// ExistsByPan known-issue — port of the remaining OFF-mode user tests.
+// ────────────────────────────────────────────────────────────────────────
+
+func TestChainDrafts_ExistsByEmail(t *testing.T) {
+	resetTables(t)
+	repo := user.NewUserRepo(testDB)
+	ctx := context.Background()
+
+	u := newDraftUser("exists_email_cd")
+	require.NoError(t, repo.Create(ctx, u))
+	require.NoError(t, repo.CommitChain(ctx, u.UserId, ""))
+
+	got, err := repo.ExistsByEmail(ctx, u.Email)
+	require.NoError(t, err)
+	require.True(t, got)
+
+	got, err = repo.ExistsByEmail(ctx, "nobody@example.com")
+	require.NoError(t, err)
+	require.False(t, got)
+}
+
+func TestChainDrafts_FetchByPan_AfterCommit(t *testing.T) {
+	// `pan` is a chain field. The companion test
+	// TestChainDrafts_FetchByPan_OnlyVisibleViaOverlayBeforeCommit verifies
+	// the committed view doesn't see DRAFTED values. This test verifies the
+	// happy path: once the draft is committed, the committed view resolves
+	// the lookup.
+	resetTables(t)
+	repo := user.NewUserRepo(testDB)
+	ctx := context.Background()
+
+	u := newDraftUser("fetchby_pan_after_commit")
+	commitUser(t, u)
+
+	view, err := repo.FetchByPan(ctx, u.Pan, false)
+	require.NoError(t, err)
+	require.Equal(t, u.UserId, view.UserId)
+	require.Equal(t, u.Pan, view.Pan)
+	require.False(t, view.HasPendingDrafts)
+}
+
+func TestChainDrafts_Timestamps_AreTimestampTZ(t *testing.T) {
+	// Pin that the generator emits TIMESTAMP WITH TIME ZONE for all audit
+	// columns. Plain TIMESTAMP loses offset information and silently shifts
+	// values across host/server tz drift. Independent of chain-drafts.
+	resetTables(t)
+	for _, tbl := range []string{"pii_users", "pii_invoices"} {
+		for _, col := range []string{"created_at", "updated_at", "deleted_at"} {
+			var dataType string
+			err := testDB.Raw(
+				`SELECT data_type FROM information_schema.columns
+				 WHERE table_name = ? AND column_name = ?`,
+				tbl, col,
+			).Scan(&dataType).Error
+			require.NoError(t, err)
+			require.Equal(t, "timestamp with time zone", dataType,
+				"%s.%s should be timestamptz, got %q", tbl, col, dataType)
+		}
+	}
+}
+
+// TestChainDrafts_ExistsByPan_KnownIssue documents that ExistsByPan currently
+// SQL-errors because pan is not in pii_users — same documented quirk OFF mode
+// pins via TestUser_ExistsByPan_KnownIssue. The test pins the current behavior
+// so a future fix is detected as a change.
+func TestChainDrafts_ExistsByPan_KnownIssue(t *testing.T) {
+	resetTables(t)
+	repo := user.NewUserRepo(testDB)
+	ctx := context.Background()
+
+	u := newDraftUser("pan_quirk_cd")
+	require.NoError(t, repo.Create(ctx, u))
+	require.NoError(t, repo.CommitChain(ctx, u.UserId, ""))
+
+	_, err := repo.ExistsByPan(ctx, u.Pan)
+	require.Error(t, err, "ExistsByPan should fail until pan is in PII table")
+	require.Contains(t, strings.ToLower(err.Error()), "pan")
 }
